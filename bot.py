@@ -779,9 +779,9 @@ async def _parse_and_save(update: Update, texte: str, msg=None):
     )
 
     # ── Synthèse vocale du récapitulatif ──────────────────────────────────────
-    if len(saved_items) == 1:
-        parsed, _ = saved_items[0]
-        await send_voice_reply(update, _build_recap_tts(parsed))
+    #if len(saved_items) == 1:
+    #    parsed, _ = saved_items[0]
+    #    await send_voice_reply(update, _build_recap_tts(parsed))
 
 
 def _build_recap_tts(p: dict) -> str:
@@ -906,7 +906,7 @@ async def _ask_question(update: Update, question: str):
             reply_markup=AFTER_RECORD_KEYBOARD
         )
         # ── Synthèse vocale de la réponse analytique ──────────────────────────
-        await send_voice_reply(update, reponse)
+        #await send_voice_reply(update, reponse)
     except Exception as e:
         await update.message.reply_text(f"❌ Erreur : {e}", reply_markup=MENU_KEYBOARD)
     finally:
@@ -969,7 +969,7 @@ async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             reply_markup=MENU_KEYBOARD
         )
         # ── Synthèse vocale des statistiques ──────────────────────────────────
-        await send_voice_reply(update, "\n".join(lines_out))
+        #await send_voice_reply(update, "\n".join(lines_out))
     finally:
         db.close()
 
@@ -1003,7 +1003,7 @@ async def cmd_historique(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             reply_markup=MENU_KEYBOARD
         )
         # ── Synthèse vocale de l'historique ───────────────────────────────────
-        await send_voice_reply(update, "\n\n".join(lines))
+        #await send_voice_reply(update, "\n\n".join(lines))
     finally:
         db.close()
 

@@ -7,4 +7,3 @@ GROQ_API_KEY       = os.environ.get("GROQ_API_KEY", "gsk_METTEZ_VOTRE_CLE_ICI")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "METTEZ_VOTRE_TOKEN_ICI")
 DATABASE_URL       = os.environ.get("DATABASE_URL", "postgresql://potager_user:Potager#2026@localhost/potager")
 GROQ_MODEL         = "llama-3.3-70b-versatile"
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8642816907:AAHCUtvH8IpRG92v6YtzjCGEWuwx5wY9jj4")
