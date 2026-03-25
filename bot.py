@@ -43,7 +43,7 @@ from telegram.ext import (
 from groq import Groq
 from sqlalchemy import func
 
-from config import GROQ_API_KEY, DATABASE_URL, TELEGRAM_BOT_TOKEN
+from config import GROQ_API_KEY, DATABASE_URL, TELEGRAM_BOT_TOKEN, GROQ_WHISPER_MODEL
 from database.db import SessionLocal, Base, engine
 from database.models import Evenement
 from utils.actions import normalize_action
@@ -261,7 +261,7 @@ async def handle_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         with open(tmp_path, "rb") as audio:
             transcription = groq_client.audio.transcriptions.create(
                 file=("message.ogg", audio),
-                model="whisper-large-v3-turbo",
+                model=GROQ_WHISPER_MODEL,
                 language="fr",
                 response_format="text"
             )
