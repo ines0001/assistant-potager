@@ -9,7 +9,7 @@ uvicorn[standard]==0.30.0
 groq>=0.13.0
 
 # Bot Telegram
-python-telegram-bot==21.6
+python-telegram-bot[job-queue]==21.6
 
 # Base de données
 sqlalchemy==2.0.36
@@ -23,4 +23,7 @@ python-dotenv==1.0.1
 gtts>=2.5.0
 # Note : ffmpeg requis pour conversion MP3→OGG (voice note Telegram)
 # Windows : winget install ffmpeg
-# ou https://www.gyan.dev/ffmpeg/builds/
+
+# Météo Open-Meteo (gratuit, sans clé API)
+requests>=2.31.0
+pytz>=2024.1

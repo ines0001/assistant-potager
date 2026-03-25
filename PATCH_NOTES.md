@@ -1,87 +1,124 @@
-# Patch — Synthèse vocale dynamique (TTS toggle)
+# Patch — Météo quotidienne Open-Meteo
 
-## Fichiers modifiés
+## Fichiers modifiés / ajoutés
 
 | Fichier | Nature |
 |---------|--------|
-| `app/utils/tts.py` | Remplace `TTS_ENABLED = True` par état persistant JSON |
-| `app/bot.py` | Import TTS étendu + 3 handlers `/tts` + appels décommentés |
-| `.gitignore` | Exclusion de `utils/.tts_state.json` |
+| `app/utils/meteo.py` | **NOUVEAU** — module complet météo |
+| `app/bot.py` | + import, + `cmd_meteo`, + `job_meteo_quotidienne`, + `main()` |
+| `app/requirements.txt` | + `requests`, + `pytz`, `python-telegram-bot[job-queue]` |
 
 ---
 
 ## Déploiement
 
-### 1. Remplacer les 2 fichiers Python
+### 1. Copier les fichiers
 
 ```
-assistant-potager/app/utils/tts.py   ← remplacer
-assistant-potager/app/bot.py          ← remplacer
+assistant-potager/app/utils/meteo.py    ← nouveau fichier
+assistant-potager/app/bot.py            ← remplacer
+assistant-potager/app/requirements.txt  ← remplacer
 ```
 
-### 2. Mettre à jour .gitignore (racine du repo)
+### 2. Installer les nouvelles dépendances
 
-Ajouter la ligne :
+```bash
+pip install requests pytz
+pip install "python-telegram-bot[job-queue]==21.6"
 ```
-utils/.tts_state.json
-```
+
+⚠️ Le `[job-queue]` est obligatoire pour que `app.job_queue` fonctionne.
+Sans ça, le bot démarre mais le job silencieux à 5h ne se déclenchera jamais.
 
 ### 3. Aucune migration SQL nécessaire
 
-Aucun changement de schéma DB.
-
-### 4. Aucune nouvelle dépendance
-
-`gtts` était déjà dans requirements.txt.
+Les observations météo utilisent la table `evenements` existante avec
+`type_action='observation'` et `texte_original='[AUTO-METEO]'`.
 
 ---
 
-## Utilisation depuis Telegram
+## Utilisation
 
 | Commande | Effet |
 |----------|-------|
-| `/tts` | Affiche l'état actuel + rappel des commandes |
-| `/tts_on` | Active les réponses vocales (persiste au redémarrage) |
-| `/tts_off` | Désactive les réponses vocales (persiste au redémarrage) |
+| `/meteo` | Déclenche manuellement la météo du jour + enregistrement en base |
+| Job 05h00 | Automatique chaque matin — silencieux, pas de message Telegram |
 
-**Par défaut :** désactivé au 1er lancement (comportement identique à avant).
+### Tester immédiatement après déploiement
 
----
+```
+/meteo
+```
 
-## Comportement de la persistance
+Doit répondre :
+```
+🌤️ Météo enregistrée !
+☀️ Ciel dégagé · Min 8°C / Max 18°C · Matin 12°C / AM 17°C · Pluie 0mm (5%) · Vent 14km/h · ☀ 07:12→20:34 · ✅ Conditions idéales
+```
 
-L'état TTS est sauvegardé dans `utils/.tts_state.json` (fichier local, hors Git).  
-Il survit au redémarrage du bot. Pour réinitialiser manuellement :
-
-```bash
-del app\utils\.tts_state.json   # Windows
-rm app/utils/.tts_state.json    # Linux/Mac
+Puis vérifier en base :
+```sql
+SELECT id, date, type_action, commentaire, texte_original
+FROM evenements
+WHERE texte_original = '[AUTO-METEO]'
+ORDER BY date DESC
+LIMIT 5;
 ```
 
 ---
 
-## Synthèse vocale active sur 4 événements
+## Ce qui est enregistré en base
 
-1. **Enregistrement d'action** — lecture du récapitulatif (action + culture + quantité + date)
-2. **Réponse analytique** (`/ask`, question vocale) — lecture de la réponse Groq
-3. **Statistiques** (`/stats`) — lecture du résumé
-4. **Historique** (`/historique`) — lecture des 10 derniers événements
+```sql
+type_action    = 'observation'
+texte_original = '[AUTO-METEO]'
+commentaire    = '☀️ Ensoleillé · Min 8°C / Max 22°C · Matin 12°C / AM 21°C · Pluie 0mm (5%) · Vent 18km/h · ☀ 07:12→20:34 · ✅ Conditions idéales'
+date           = 2026-03-25 00:00:00
+culture        = NULL
+```
+
+### Anti-doublon intégré
+
+Si tu lances `/meteo` deux fois dans la même journée, ou si le job
+se redéclenche par erreur, **aucun doublon ne sera créé** — la fonction
+vérifie si une observation `[AUTO-METEO]` existe déjà pour aujourd'hui.
 
 ---
 
-## BotFather — commandes à déclarer (optionnel)
+## Données Open-Meteo récupérées
 
-Pour que les commandes apparaissent dans le menu de suggestion Telegram :
+| Donnée | Source API |
+|--------|-----------|
+| Température min/max | `daily.temperature_2m_min/max` |
+| Température 8h / 14h | `hourly.temperature_2m` |
+| Précipitations totales | `daily.precipitation_sum` |
+| Probabilité de pluie max | `daily.precipitation_probability_max` |
+| Vent max | `daily.windspeed_10m_max` |
+| Code météo WMO | `daily.weathercode` |
+| Lever/coucher soleil | `daily.sunrise/sunset` |
+
+**Coordonnées configurées :**
+Latitude 48.96082 / Longitude 2.20382 (Cergy / Val-d'Oise)
+
+---
+
+## Conseils potager générés automatiquement (logique locale)
+
+| Condition | Conseil affiché |
+|-----------|----------------|
+| Temp matin ≤ 0°C | ⚠️ Risque de gel — protéger les plantations |
+| Temp PM ≥ 35°C | 🌡️ Canicule — arrosage en soirée indispensable |
+| Orage prévu (WMO 95/96/99) | ⛈️ Pas d'arrosage ni de traitement |
+| Précip ≥ 10mm | 🌧️ Pluie abondante — arrosage inutile |
+| Pas de pluie + temp ≥ 22°C | 💧 Penser à arroser en soirée |
+| Vent ≥ 50 km/h | 💨 Vérifier tuteurs et protections |
+| Brouillard | 🌫️ Risque de maladies fongiques |
+| Beau temps + vent < 20km/h | ✅ Conditions idéales pour traitements |
+
+---
+
+## BotFather — ajouter la commande (optionnel)
 
 ```
-/setcommands → sélectionner votre bot → coller :
-
-start - Démarrer l'assistant
-stats - Statistiques du potager
-historique - 10 derniers événements
-ask - Poser une question analytique
-corriger - Corriger un enregistrement
-tts - État de la synthèse vocale
-tts_on - Activer les réponses vocales
-tts_off - Désactiver les réponses vocales
+meteo - Météo du jour et conseil potager
 ```

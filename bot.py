@@ -50,6 +50,7 @@ from utils.actions import normalize_action
 from llm.groq_client import parse_commande, repondre_question
 from utils.date_utils import parse_date
 from utils.tts import send_voice_reply, set_tts_enabled, is_tts_enabled
+from utils.meteo import save_meteo_observation, fetch_meteo, format_meteo_commentaire
 
 # ── Init ────────────────────────────────────────────────────────────────────────
 Base.metadata.create_all(bind=engine)
@@ -1513,12 +1514,78 @@ async def _corr_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE, texte: s
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# MÉTÉO
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def cmd_meteo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """
+    /meteo — Déclenche manuellement la récupération météo et l'enregistre en base.
+    Utile pour tester ou forcer une mise à jour hors du job automatique 5h00.
+    """
+    msg = await update.message.reply_text("🌤️ *Récupération météo en cours...*", parse_mode="Markdown")
+    db  = SessionLocal()
+    try:
+        meteo = save_meteo_observation(db)
+        if meteo is None:
+            # Doublon ou erreur — tenter un fetch sans sauvegarde pour afficher quand même
+            meteo = fetch_meteo()
+            if meteo:
+                commentaire = format_meteo_commentaire(meteo)
+                await msg.edit_text(
+                    f"🌤️ *Météo du jour* _(déjà enregistrée aujourd'hui)_\n\n`{commentaire}`",
+                    parse_mode="Markdown"
+                )
+            else:
+                await msg.edit_text("❌ Impossible de récupérer la météo. Vérifiez votre connexion.")
+            return
+
+        commentaire = format_meteo_commentaire(meteo)
+        await msg.edit_text(
+            f"🌤️ *Météo enregistrée !*\n\n`{commentaire}`",
+            parse_mode="Markdown"
+        )
+        log.info("🌤️  MÉTÉO MANUELLE  : déclenchée par /meteo")
+    except Exception as e:
+        log.error(f"❌ MÉTÉO COMMANDE   : {e}")
+        await msg.edit_text(f"❌ Erreur : {e}")
+    finally:
+        db.close()
+
+
+async def job_meteo_quotidienne(context: ContextTypes.DEFAULT_TYPE):
+    """
+    Job planifié à 05h00 chaque matin (Europe/Paris).
+    Récupère la météo Open-Meteo et l'enregistre silencieusement en base
+    comme action 'observation' avec texte_original='[AUTO-METEO]'.
+    Aucun message Telegram envoyé.
+    Zéro token Groq consommé.
+    """
+    log.info("🌅 JOB MÉTÉO       : déclenchement automatique 05h00")
+    db = SessionLocal()
+    try:
+        meteo = save_meteo_observation(db)
+        if meteo:
+            log.info(
+                f"🌤️  MÉTÉO AUTO      : {meteo['emoji']} {meteo['label']} | "
+                f"{meteo['temp_matin']}°C matin / {meteo['temp_aprem']}°C AM | "
+                f"Pluie {meteo['precipitations']}mm ({meteo['proba_pluie']}%)"
+            )
+        else:
+            log.warning("⚠️  MÉTÉO AUTO      : aucune donnée sauvée (doublon ou erreur réseau)")
+    except Exception as e:
+        log.error(f"❌ JOB MÉTÉO ERREUR : {e}")
+    finally:
+        db.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # LANCEMENT
 # ══════════════════════════════════════════════════════════════════════════════
 def main():
     print("🌿 Démarrage du bot Telegram potager...")
     print(f"   Token : {TELEGRAM_BOT_TOKEN[:10]}...")
     print(f"   TTS   : {'🔊 activé' if is_tts_enabled() else '🔇 désactivé'} (commande /tts pour changer)")
+    print(f"   Météo : 🌤️ job planifié à 05h00 Europe/Paris · /meteo pour déclencher manuellement")
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
@@ -1534,9 +1601,23 @@ def main():
     app.add_handler(CommandHandler("tts_on",     cmd_tts_on))
     app.add_handler(CommandHandler("tts_off",    cmd_tts_off))
 
+    # Commande météo manuelle
+    app.add_handler(CommandHandler("meteo",      cmd_meteo))
+
     # Messages
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+    # ── Job météo quotidien à 05h00 (Europe/Paris) ────────────────────────────
+    import pytz
+    from datetime import time as dtime
+    tz_paris = pytz.timezone("Europe/Paris")
+    app.job_queue.run_daily(
+        job_meteo_quotidienne,
+        time=dtime(hour=5, minute=0, second=0, tzinfo=tz_paris),
+        name="meteo_quotidienne",
+    )
+    log.info("🌅 JOB MÉTÉO       : planifié à 05h00 Europe/Paris")
 
     print("   Bot prêt ! Ouvrez Telegram et parlez à votre bot.")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
