@@ -25,6 +25,52 @@ def _today_context() -> str:
         f"Avant-hier = {day_before.isoformat()}."
     )
 
+
+INTENT_PROMPT = """Tu es un assistant assistant potager spécialisé dans l'analyse de questions en langage naturel.
+Donne uniquement du JSON sans texte additionnel, sans guillemets, avec ces champs:
+{
+  "action": "semis|plantation|arrosage|recolte|repiquage|traitement|desherbage|taille|paillage|observation|null",
+  "culture": string|null,  # nom du légume au singulier minuscule, sinon null
+  "date_from": string|null  # date ISO ou null
+}
+
+Exemples :
+"quels légumes ai-je le plus récoltés en kg ?" -> {"action":"recolte","culture":null,"date_from":null}
+"arrosage courgettes cette semaine" -> {"action":"arrosage","culture":"courgette","date_from":"2026-03-19"}
+"quand ai-je semé des carottes" -> {"action":"semis","culture":"carotte","date_from":null}
+""" 
+
+
+def extract_intent(question: str) -> dict:
+    chat = _client.chat.completions.create(
+        model=GROQ_MODEL,
+        messages=[
+            {"role": "system", "content": INTENT_PROMPT},
+            {"role": "user", "content": question}
+        ],
+        temperature=0.0,
+        max_tokens=128,
+        stream=False
+    )
+
+    raw = chat.choices[0].message.content.strip()
+    if raw.startswith("```"):
+        lines = raw.split("\n")
+        raw = "\n".join(lines[1:-1]) if len(lines) > 2 else raw
+
+    try:
+        parsed = json.loads(raw)
+    except Exception as e:
+        # fallback conservatif
+        return {"action": None, "culture": None, "date_from": None}
+
+    # normalisation des clés
+    return {
+        "action": parsed.get("action"),
+        "culture": parsed.get("culture"),
+        "date_from": parsed.get("date_from"),
+    }
+
 # ─────────────────────────────────────────────────────────────────────────────
 # PROMPT PARSING — retourne UN ou PLUSIEURS JSONs selon la phrase
 # ─────────────────────────────────────────────────────────────────────────────

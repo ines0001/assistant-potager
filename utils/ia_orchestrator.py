@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timedelta
 
 from database.models import Evenement
+from llm.groq_client import extract_intent
 
 log = logging.getLogger("potager.orchestrator")
 
@@ -63,7 +64,14 @@ def fetch_filtered_events(db_session, intent: dict) -> list[Evenement]:
     if intent.get("culture"):
         query = query.filter(Evenement.culture == intent["culture"])
     if intent.get("date_from"):
-        query = query.filter(Evenement.date >= intent["date_from"])
+        date_from = intent["date_from"]
+        if isinstance(date_from, str):
+            try:
+                date_from = datetime.fromisoformat(date_from)
+            except Exception:
+                date_from = None
+        if date_from:
+            query = query.filter(Evenement.date >= date_from)
 
     # Dernier événement en priorité
     if intent.get("filter_last"):
@@ -107,6 +115,17 @@ def build_question_context(db_session, question: str) -> str:
     log.info(f"🔍 ORCHESTRATOR | Question: '{question}'")
 
     intent = extract_question_intent(question)
+
+    # Fallback vers Groq si intention locale non assez définie
+    if not intent.get('action') and not intent.get('culture'):
+        log.info("🚀 ORCHESTRATOR | Intention locale incomplete, appel fallback Groq pour extraire action/culture/date")
+        external_intent = extract_intent(question)
+        if external_intent:
+            intent['action'] = intent.get('action') or external_intent.get('action')
+            intent['culture'] = intent.get('culture') or external_intent.get('culture')
+            if not intent.get('date_from') and external_intent.get('date_from'):
+                intent['date_from'] = external_intent.get('date_from')
+
     log.info(f"🎯 ORCHESTRATOR | Intention extraite: action='{intent.get('action')}', culture='{intent.get('culture')}', "
              f"filter_last={intent.get('filter_last')}, filter_aggregated={intent.get('filter_aggregated')}, "
              f"date_from={intent.get('date_from')}")
