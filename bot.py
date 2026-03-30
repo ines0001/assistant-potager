@@ -97,6 +97,11 @@ ACTION_KEYWORDS = {
     "observer"     : "observation",
     "observation"  : "observation",
     "constaté"     : "observation",
+    "perdu"        : "perte",
+    "perte"        : "perte",
+    "mort"         : "perte",
+    "arraché"      : "perte",
+    "crevé"        : "perte",
 }
 
 # ── Légumes connus ────────────────────────────────────────────────────────────
@@ -453,7 +458,7 @@ Classe ce message dans UNE SEULE catégorie parmi :
 - SUPPRIMER   : veut supprimer ou effacer un enregistrement
 - MENU        : veut revenir au menu, accueil, annuler
 - NOUVELLE    : veut saisir une nouvelle action (après une autre)
-- ACTION      : décrit une action potager à enregistrer (récolte, semis, plantation, arrosage, paillage, traitement, observation, fertilisation, taille, tuteurage, repiquage, désherbage)
+- ACTION      : décrit une action potager à enregistrer (récolte, semis, plantation, arrosage, paillage, traitement, observation, fertilisation, taille, tuteurage, repiquage, désherbage, perte)
 
 Message : "{texte}"
 
@@ -926,6 +931,14 @@ async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             .filter(Evenement.type_action == "plantation")
             .all()
         )
+        pertes = (
+            db.query(Evenement.culture, func.sum(Evenement.quantite))
+            .filter(Evenement.type_action == "perte")
+            .group_by(Evenement.culture)
+            .all()
+        )
+        pertes_dict = {culture: qte for culture, qte in pertes}
+        
         if plantations:
             totaux = {}
             for culture, qte, rang, unite in plantations:
@@ -934,9 +947,14 @@ async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 key = (culture, unite or "plants")
                 totaux[key] = totaux.get(key, 0) + total_plants
             if totaux:
-                lines_out.append("\n🌱 *Plantations (total plants) :*")
-                for (culture, unite), tot in totaux.items():
-                    lines_out.append(f"  • {culture} : *{int(tot)} {unite}*")
+                lines_out.append("\n🌱 *Stock plants actuel :*")
+                for (culture, unite), tot_plant in totaux.items():
+                    perdu = pertes_dict.get(culture, 0)
+                    stock_reel = tot_plant - perdu
+                    if perdu > 0:
+                        lines_out.append(f"  • {culture} : *{int(stock_reel)} {unite}* (planté {int(tot_plant)}, perdu {int(perdu)})")
+                    else:
+                        lines_out.append(f"  • {culture} : *{int(stock_reel)} {unite}*")
 
         # Arrosages
         arrosages = (

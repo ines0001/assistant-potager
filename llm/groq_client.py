@@ -29,7 +29,7 @@ def _today_context() -> str:
 INTENT_PROMPT = """Tu es un assistant assistant potager spécialisé dans l'analyse de questions en langage naturel.
 Donne uniquement du JSON sans texte additionnel, sans guillemets, avec ces champs:
 {
-  "action": "semis|plantation|arrosage|recolte|repiquage|traitement|desherbage|taille|paillage|observation|null",
+  "action": "semis|plantation|arrosage|recolte|repiquage|traitement|desherbage|taille|paillage|observation|perte|null",
   "culture": string|null,  # nom du légume au singulier minuscule, sinon null
   "date_from": string|null  # date ISO ou null
 }
@@ -82,7 +82,7 @@ Si une information n'est pas mentionnée, mets null. Ne jamais inventer.
 
 Champs à extraire :
 {{
-  "action"        : string,   // recolte | semis | repiquage | arrosage | fertilisation | traitement | desherbage | taille | paillage | observation | plantation | tuteurage
+  "action"        : string,   // recolte | semis | repiquage | arrosage | fertilisation | traitement | desherbage | taille | paillage | observation | plantation | tuteurage | perte
   "culture"       : string,   // légume au singulier minuscule ("tomates" → "tomate")
   "variete"       : string,   // variété ou couleur ("rouge", "nantaise"...)
   "quantite"      : number,   // quantité numérique (PAR RANG si rang mentionné)
@@ -113,6 +113,9 @@ Exemples :
 
 "semé des carottes nantaises parcelle est"
 → {{"action":"semis","culture":"carotte","quantite":null,"unite":null,"date":null,"parcelle":"est","rang":null,"duree_minutes":null,"traitement":null,"variete":"nantaise","commentaire":null}}
+
+"J'ai perdu 3 plants de tomates à cause du gel"
+→ {{"action":"perte","culture":"tomate","quantite":3,"unite":"plants","date":null,"parcelle":null,"rang":null,"duree_minutes":null,"traitement":null,"variete":null,"commentaire":"gel"}}
 
 "J'ai planté 15 oignons blancs et 10 radis hier"
 → [{{"action":"plantation","culture":"oignon","variete":"blanc","quantite":15,"unite":"plants","date":"{yesterday}","parcelle":null,"rang":null,"duree_minutes":null,"traitement":null,"commentaire":null}},{{"action":"plantation","culture":"radis","variete":null,"quantite":10,"unite":"plants","date":"{yesterday}","parcelle":null,"rang":null,"duree_minutes":null,"traitement":null,"commentaire":null}}]
@@ -195,6 +198,11 @@ REGLE CALCUL PLANTATIONS :
 - Afficher UNIQUEMENT le total final, jamais les calculs intermediaires entre parentheses.
 - Exemple correct  : "- tomate : 42 plants"
 - Exemple INTERDIT : "- tomate : 42 plants (10 x 3 + 4 x 3)"
+
+REGLE CALCUL STOCK REEL :
+- Stock reel = plantations totales - pertes totales pour chaque culture.
+- Afficher : "culture : X plants (plante Y, perdu Z)"
+- Si pas de pertes : "culture : X plants"
 """
 
 def repondre_question(question: str, contexte_json: str) -> str:

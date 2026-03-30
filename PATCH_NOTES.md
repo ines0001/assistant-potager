@@ -1,3 +1,51 @@
+# Patch — Fonctionnalité perte de plants
+
+**Version :** feature — 30 mars 2026  
+**Fichiers modifiés :** `utils/actions.py`, `llm/groq_client.py`, `bot.py`, `tests/` (nouveau)  
+**Migrations SQL :** aucune
+
+---
+
+## Contexte
+
+Ajout de la fonctionnalité de signalement des pertes de plants (gel, maladie, ravageur) avec recalcul automatique du stock réel.
+
+---
+
+## Évolutions réalisées
+
+### 1. Extension de `utils/actions.py`
+- Ajout de l'action canonique `perte` dans `ACTION_MAP` avec synonymes (perdu, mort, arraché, crevé...).
+- Mise à jour des variants pour les actions existantes (paillé, fertilisé, etc.).
+
+### 2. Mise à jour de `llm/groq_client.py`
+- Ajout de `perte` dans `INTENT_PROMPT`, `PARSE_PROMPT` et `QUERY_PROMPT`.
+- Ajout d'exemple de parsing pour "J'ai perdu 3 plants de tomates à cause du gel".
+- Règle de calcul stock réel dans `QUERY_PROMPT` (plantations - pertes).
+
+### 3. Modification de `bot.py`
+- Ajout de mots-clés pour `perte` dans `ACTION_KEYWORDS`.
+- Ajout de `perte` dans `_CLASSIFY_PROMPT`.
+- Modification de `cmd_stats()` pour calculer stock réel avec détail (planté X, perdu Y).
+
+### 4. Création de tests unitaires
+- `tests/test_actions.py` : Tests pour `normalize_action` et `ACTION_MAP`.
+- `tests/test_groq.py` : Tests pour parsing et questions (mocks).
+- `tests/test_bot.py` : Tests pour `cmd_stats` avec DB de test.
+- `requirements.txt` : Ajout de `pytest` et `pytest-asyncio`.
+
+---
+
+## Impact
+
+- **Nouveau type d'action** : "perte" pour signaler les pertes de plants.
+- **Calcul automatique** : Stock réel = plantations totales - pertes totales.
+- **Affichage enrichi** : /stats montre "X plants (planté Y, perdu Z)".
+- **Questions analytiques** : Support des questions sur stock restant.
+- **Tests** : Couverture pour validation des fonctionnalités.
+
+---
+
 # Patch — Optimisation orchestrateur IA pour questions analytiques
 
 **Version :** feature — 26 mars 2026  

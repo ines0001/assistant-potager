@@ -23,28 +23,28 @@ ACTION_MAP: dict[str, list[str]] = {
         "irriguer", "donner de l eau", "donner de l'eau"
     ],
     "desherbage": [
-        "desherbage", "desherber", "desherbe",
+        "desherbage", "desherber", "desherbe", "désherbé",
         "sarcler", "sarclage",
         "enlever les mauvaises herbes", "arracher les herbes"
     ],
     "paillage": [
-        "paillage", "pailler", "paillis",
+        "paillage", "pailler", "paillé", "paillis",
         "mettre de la paille", "couvrir le sol", "mulch", "mulcher"
     ],
     "amendement": [
         "amender", "amendement",
         "ajouter du compost", "mettre du compost", "compost",
-        "fumier", "terreau", "engrais", "fertiliser", "fertilisation"
+        "fumier", "terreau", "engrais", "fertiliser", "fertilisation", "fertilisé"
     ],
     "taille": [
-        "taille", "tailler", "taille des", "couper", "pincer", "elaguer", "rabattre"
+        "taille", "tailler", "taillé", "couper", "pincer", "elaguer", "rabattre"
     ],
     "tuteurage": [
-        "tuteurage", "tuteurer", "mettre un tuteur",
+        "tuteurage", "tuteurer", "tuteuré", "mettre un tuteur",
         "attacher", "palissage", "palisser"
     ],
     "traitement": [
-        "traitement", "traiter", "pulveriser", "pulverisation",
+        "traitement", "traiter", "traité", "pulveriser", "pulverisation",
         "spray", "savon noir", "purin d ortie", "purin d'ortie"
     ],
     "protection": [
@@ -53,8 +53,15 @@ ACTION_MAP: dict[str, list[str]] = {
         "proteger du gel", "proteger du froid", "anti insectes", "anti-insectes"
     ],
     "observation": [
-        "observation", "observer", "surveiller", "constat", "noter",
+        "observation", "observer", "observé", "surveiller", "constat", "noter",
         "maladie", "mildiou", "attaque", "gel", "secheresse", "limaces"
+    ],
+    "perte": [
+        "perte", "perdu", "perdue", "perdus", "perdues",
+        "mort", "morte", "morts", "mortes",
+        "arrache", "arrachee", "arraches", "arrachees",
+        "creve", "crevee", "creves", "crevees",
+        "disparu", "disparue", "disparus", "disparues"
     ],
 }
 
