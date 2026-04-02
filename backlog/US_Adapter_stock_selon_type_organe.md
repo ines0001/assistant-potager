@@ -27,7 +27,7 @@ Feature: Calcul du stock adapté au type d'organe récolté
   Scenario: Récolte d'une culture végétative réduit le stock
     Given un plant de salade avec stock = 4 et type_organe_recolte = "végétatif"
     When l'utilisateur enregistre une récolte de 1 plant de salade
-    Then le stock de salade est decrementé à 3
+    Then le stock de salade est décrémenté à 3
     And l'événement de récolte est enregistré en base
 
   Scenario: Récolte d'une culture reproductive ne réduit pas le stock
