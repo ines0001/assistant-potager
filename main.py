@@ -20,6 +20,7 @@ import os
 from database.db import Base, engine, SessionLocal
 from database.models import Evenement, CultureConfig
 from utils.actions import normalize_action
+from utils.stock import calcul_stock_cultures, format_stock_stats_json
 from llm.groq_client import parse_commande, repondre_question
 from utils.date_utils import parse_date
 from llm.rag import add_to_rag
@@ -128,6 +129,11 @@ def parse(req: TexteRequest):
                 if config:
                     event.type_organe_recolte = config.type_organe_recolte
             
+            # [US-001] Héritage automatique du type d'organe récolté
+            if event.culture:
+                cfg = db.query(CultureConfig).filter(CultureConfig.nom == event.culture).first()
+                if cfg:
+                    event.type_organe_recolte = cfg.type_organe_recolte
             db.add(event)
             db.commit()
             db.refresh(event)
@@ -196,54 +202,30 @@ def ask(req: TexteRequest):
 
 @app.get("/stats")
 def stats():
-    """
-    Statistiques rapides JSON sans LLM — réponse instantanée.
-    Idéal pour un tableau de bord.
-    """
+    """[US-002/CA4] Statistiques JSON avec stock agronomique différencié."""
+    from utils.stock import calcul_stock_cultures, format_stock_stats_json
     db = SessionLocal()
     try:
-        total = db.query(Evenement).count()
-
-        # Récoltes par culture
-        recoltes = (
-            db.query(Evenement.culture, func.sum(Evenement.quantite))
-            .filter(Evenement.type_action == "recolte")
-            .group_by(Evenement.culture)
-            .all()
-        )
-
-        # Arrosages
+        total  = db.query(Evenement).count()
+        stocks = calcul_stock_cultures(db)
         arrosages = (
             db.query(func.count(Evenement.id), func.sum(Evenement.duree))
-            .filter(Evenement.type_action == "arrosage")
-            .first()
+            .filter(Evenement.type_action == "arrosage").first()
         )
-
-        # Traitements
         traitements = (
             db.query(Evenement.traitement, func.count(Evenement.id))
             .filter(Evenement.type_action == "traitement")
-            .group_by(Evenement.traitement)
-            .all()
+            .group_by(Evenement.traitement).all()
         )
-
         return {
-            "total_evenements"   : total,
-            "recoltes_par_culture": [
-                {"culture": c or "?", "total": round(q, 2) if q else 0}
-                for c, q in recoltes
-            ],
-            "arrosages": {
-                "nb"              : arrosages[0] or 0,
-                "duree_totale_min": arrosages[1] or 0,
-            },
-            "traitements": [
-                {"produit": t or "?", "nb_applications": n}
-                for t, n in traitements
-            ]
+            "total_evenements"  : total,
+            "stock_par_culture" : format_stock_stats_json(stocks),
+            "arrosages"         : {"nb": arrosages[0] or 0, "duree_totale_min": arrosages[1] or 0},
+            "traitements"       : [{"produit": t or "?", "nb_applications": n} for t, n in traitements],
         }
     finally:
         db.close()
+
 
 
 @app.get("/historique")

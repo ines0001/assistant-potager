@@ -56,6 +56,7 @@ from llm.groq_client import parse_commande, repondre_question
 from utils.ia_orchestrator import build_question_context
 from utils.date_utils import parse_date
 from utils.tts import send_voice_reply, set_tts_enabled, is_tts_enabled
+from utils.stock import calcul_stock_cultures, format_stock_ligne_telegram
 from utils.meteo import save_meteo_observation, fetch_meteo, format_meteo_commentaire
 
 # ── Init ────────────────────────────────────────────────────────────────────────
@@ -910,71 +911,47 @@ async def _ask_question(update: Update, question: str):
 
 
 # ── COMMANDES ───────────────────────────────────────────────────────────────────
-async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Statistiques rapides. Plantations : total = quantite × rang."""
+async def cmd_stats(update, ctx):
+    """
+    /stats — Statistiques rapides du potager.
+
+    [US-003 / CA1] Cultures végétatives : affiche "X plants récoltés"
+    [US-003 / CA2] Cultures reproductrices : affiche "X plants actifs, Y kg cumulés"
+    [US-003 / CA3] Deux sections distinctes : végétatif vs reproducteur
+    [US-002 / CA3] Calcul stock différencié selon type_organe_recolte
+    [US-002 / CA4] Champs stock_plants + rendement_total distincts via /stats API
+    """
+    from utils.stock import calcul_stock_cultures, format_stock_ligne_telegram
+
     db = SessionLocal()
     try:
         total = db.query(Evenement).count()
         lines_out = [f"📊 *Statistiques potager*\n\n📦 Total : *{total} événements*\n"]
 
-        # Récoltes
-        recoltes = (
-            db.query(Evenement.culture, Evenement.unite, func.sum(Evenement.quantite))
-            .filter(Evenement.type_action == "recolte")
-            .group_by(Evenement.culture, Evenement.unite)
-            .all()
-        )
-        if recoltes:
-            lines_out.append("🥬 *Récoltes :*")
-            for culture, unite, qte in recoltes:
-                if culture:
-                    lines_out.append(f"  • {culture} : *{round(qte,2) if qte else 0} {unite or 'unités'}*")
+        # ── [US-002] Calcul stock agronomique différencié ──────────────────────
+        stocks = calcul_stock_cultures(db)
 
-        # Plantations avec calcul quantite × rang
-        plantations = (
-            db.query(Evenement.culture, Evenement.quantite, Evenement.rang, Evenement.unite)
-            .filter(Evenement.type_action == "plantation")
-            .all()
-        )
-        pertes = (
-            db.query(Evenement.culture, func.sum(Evenement.quantite))
-            .filter(Evenement.type_action == "perte")
-            .group_by(Evenement.culture)
-            .all()
-        )
-        pertes_dict = {culture: qte for culture, qte in pertes}
-        
-        recoltes = (
-            db.query(Evenement.culture, func.sum(Evenement.quantite))
-            .filter(Evenement.type_action == "recolte")
-            .group_by(Evenement.culture)
-            .all()
-        )
-        recoltes_dict = {culture: qte for culture, qte in recoltes}
-        
-        if plantations:
-            totaux = {}
-            for culture, qte, rang, unite in plantations:
-                if not culture: continue
-                total_plants = (qte or 0) * (rang or 1)
-                key = (culture, unite or "plants")
-                totaux[key] = totaux.get(key, 0) + total_plants
-            if totaux:
-                lines_out.append("\n🌱 *Stock plants actuel :*")
-                for (culture, unite), tot_plant in totaux.items():
-                    perdu = pertes_dict.get(culture, 0)
-                    recolte = recoltes_dict.get(culture, 0)
-                    stock_reel = tot_plant - perdu - recolte
-                    details = []
-                    details.append(f"planté {int(tot_plant)}")
-                    if perdu > 0:
-                        details.append(f"perdu {int(perdu)}")
-                    if recolte > 0:
-                        details.append(f"récolté {int(recolte)}")
-                    detail_str = ", ".join(details)
-                    lines_out.append(f"  • {culture} : *{int(stock_reel)} {unite}* ({detail_str})")
+        if stocks:
+            # [US-003 / CA3] Séparer végétatif et reproducteur
+            veg_stocks  = {c: s for c, s in stocks.items() if not s.is_reproducteur}
+            repr_stocks = {c: s for c, s in stocks.items() if s.is_reproducteur}
 
-        # Arrosages
+            # [US-003 / CA1] Section végétatif — "cultures à récolte unique"
+            if veg_stocks:
+                lines_out.append("🥬 *Cultures végétatives (récolte destructive) :*")
+                for culture, s in veg_stocks.items():
+                    lines_out.append("  " + format_stock_ligne_telegram(s))
+
+            # [US-003 / CA2] Section reproducteur — "cultures productives continues"
+            if repr_stocks:
+                lines_out.append("\n🍅 *Cultures reproductrices (récolte continue) :*")
+                for culture, s in repr_stocks.items():
+                    lines_out.append("  " + format_stock_ligne_telegram(s))
+
+        else:
+            lines_out.append("_Aucune plantation enregistrée._")
+
+        # ── Arrosages (inchangé) ───────────────────────────────────────────────
         arrosages = (
             db.query(func.count(Evenement.id), func.sum(Evenement.duree))
             .filter(Evenement.type_action == "arrosage")
@@ -985,15 +962,36 @@ async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             if arrosages[1]:
                 lines_out.append(f"  Durée totale : *{arrosages[1]} min*")
 
-        await update.message.reply_text(
-            "\n".join(lines_out),
-            parse_mode="Markdown",
-            reply_markup=MENU_KEYBOARD
+        # ── Traitements (bonus) ───────────────────────────────────────────────
+        nb_traitements = (
+            db.query(func.count(Evenement.id))
+            .filter(Evenement.type_action == "traitement")
+            .scalar()
         )
-        # ── Synthèse vocale des statistiques ──────────────────────────────────
-        await send_voice_reply(update, "\n".join(lines_out))
+        if nb_traitements:
+            lines_out.append(f"\n💊 *Traitements :* {nb_traitements} applications")
+
+        texte_final = "\n".join(lines_out)
+
+        try:
+            await update.message.reply_text(
+                texte_final,
+                parse_mode="Markdown",
+                reply_markup=MENU_KEYBOARD
+            )
+        except Exception:
+            # Fallback sans Markdown si le texte contient des caractères problématiques
+            await update.message.reply_text(
+                texte_final.replace("*", "").replace("_", ""),
+                reply_markup=MENU_KEYBOARD
+            )
+
+        # ── Synthèse vocale ───────────────────────────────────────────────────
+        await send_voice_reply(update, texte_final)
+
     finally:
         db.close()
+
 
 
 async def cmd_historique(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
