@@ -233,6 +233,7 @@ MENU_KEYBOARD = ReplyKeyboardMarkup(
     [
         [KeyboardButton("🎤 Nouvelle action vocale"), KeyboardButton("🔍 Interroger")],
         [KeyboardButton("📋 Historique"),             KeyboardButton("📊 Stats")],
+        [KeyboardButton("✏️ Corriger")],
     ],
     resize_keyboard=True,
     is_persistent=True
@@ -459,12 +460,24 @@ _CLASSIFY_PROMPT = """Tu es un assistant potager. L'utilisateur t'envoie un mess
 Classe ce message dans UNE SEULE catégorie parmi :
 - STATS       : veut voir des statistiques, bilan, résumé, chiffres
 - HISTORIQUE  : veut voir l'historique, le journal, les derniers événements
-- INTERROGER  : pose une question sur ses données (combien, quand, quel...)
+- INTERROGER  : pose une question ou demande d'AFFICHER des données existantes (combien, quand, quel, afficher, montrer, liste, voir, consulter...)
 - CORRIGER    : veut corriger, modifier, changer un enregistrement existant
 - SUPPRIMER   : veut supprimer ou effacer un enregistrement
 - MENU        : veut revenir au menu, accueil, annuler
 - NOUVELLE    : veut saisir une nouvelle action (après une autre)
-- ACTION      : décrit une action potager à enregistrer (récolte, semis, plantation, arrosage, paillage, traitement, observation, fertilisation, taille, tuteurage, repiquage, désherbage, perte)
+- ACTION      : décrit une action potager réellement RÉALISÉE à enregistrer (récolte, semis, plantation, arrosage, paillage, traitement, observation, fertilisation, taille, tuteurage, repiquage, désherbage, perte)
+
+RÈGLE IMPORTANTE : si le message contient "afficher", "montrer", "voir", "liste", "consulter", "quand", "combien", "quel" → c'est INTERROGER ou HISTORIQUE, jamais ACTION.
+
+Exemples :
+- "afficher les récoltes de carotte variété nantaise" → INTERROGER
+- "afficher mes semis de radis" → INTERROGER
+- "voir l'historique des arrosages courgette" → HISTORIQUE
+- "combien ai-je récolté de tomates" → INTERROGER
+- "j'ai récolté 2 kg de tomates" → ACTION
+- "récolte 500g de carotte nantaise hier" → ACTION
+- "semis de radis 50 graines" → ACTION
+- "quand ai-je semé les carottes" → INTERROGER
 
 Message : "{texte}"
 
@@ -500,8 +513,8 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     texte     = texte_raw.lower()  # comparaison insensible à la casse
     log.info(f"💬 MESSAGE TEXTE  : {texte_raw}")
 
-    # Réinitialiser le mode SAUF si on est en plein flux de correction
-    MODES_CORRECTION = {'corr_select', 'corr_apply', 'corr_search', 'corr_confirm_delete', 'corr_confirm'}
+    # Réinitialiser le mode SAUF si on est en plein flux de correction ou en attente de question
+    MODES_CORRECTION = {'corr_select', 'corr_apply', 'corr_search', 'corr_confirm_delete', 'corr_confirm', 'ask'}
     if ctx.user_data.get('mode') not in MODES_CORRECTION:
         ctx.user_data['mode'] = None
 
@@ -921,12 +934,11 @@ async def cmd_stats(update, ctx):
     [US-002 / CA3] Calcul stock différencié selon type_organe_recolte
     [US-002 / CA4] Champs stock_plants + rendement_total distincts via /stats API
     """
-    from utils.stock import calcul_stock_cultures, format_stock_ligne_telegram
+    from utils.stock import calcul_stock_cultures, format_stock_ligne_telegram, calcul_semis
 
     db = SessionLocal()
     try:
-        total = db.query(Evenement).count()
-        lines_out = [f"📊 *Statistiques potager*\n\n📦 Total : *{total} événements*\n"]
+        lines_out = ["📊 *Statistiques potager*\n"]
 
         # ── [US-002] Calcul stock agronomique différencié ──────────────────────
         stocks = calcul_stock_cultures(db)
@@ -950,6 +962,40 @@ async def cmd_stats(update, ctx):
 
         else:
             lines_out.append("_Aucune plantation enregistrée._")
+
+        # ── Semis ──────────────────────────────────────────────────────────────
+        semis = calcul_semis(db)
+        if semis:
+            veg_semis  = {c: s for c, s in semis.items() if s["type_organe"] != "reproducteur"}
+            repr_semis = {c: s for c, s in semis.items() if s["type_organe"] == "reproducteur"}
+
+            lines_out.append("\n🌱 *Semis :*")
+
+            if veg_semis:
+                lines_out.append("  _→ Récolte destructive (végétatif)_")
+                for culture, s in veg_semis.items():
+                    if s["total_seme"] is not None and s["total_seme"] > 0:
+                        ligne = f"  • {culture} : *{int(s['total_seme'])} {s['unite']}* ({s['nb_semis']} semis)"
+                    else:
+                        ligne = f"  • {culture} : *{s['nb_semis']} semis*"
+                    if s["nb_recoltes"] > 0:
+                        r_val = round(s["total_recolte"], 2)
+                        r_u   = s["unite_recolte"] or "unités"
+                        ligne += f" · {r_val} {r_u} récoltés ({s['nb_recoltes']} fois)"
+                    lines_out.append(ligne)
+
+            if repr_semis:
+                lines_out.append("  _→ Récolte continue (reproducteur)_")
+                for culture, s in repr_semis.items():
+                    if s["total_seme"] is not None and s["total_seme"] > 0:
+                        ligne = f"  • {culture} : *{int(s['total_seme'])} {s['unite']}* ({s['nb_semis']} semis)"
+                    else:
+                        ligne = f"  • {culture} : *{s['nb_semis']} semis*"
+                    if s["nb_recoltes"] > 0:
+                        r_val = round(s["total_recolte"], 2)
+                        r_u   = s["unite_recolte"] or "unités"
+                        ligne += f" · {r_val} {r_u} récoltés ({s['nb_recoltes']} fois)"
+                    lines_out.append(ligne)
 
         # ── Arrosages (inchangé) ───────────────────────────────────────────────
         arrosages = (

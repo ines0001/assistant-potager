@@ -22,3 +22,6 @@ Thumbs.db
 
 # État TTS persistant (préférence locale)
 utils/.tts_state.json
+
+# Suivi local des migrations déjà appliquées en dev
+.migrations_applied

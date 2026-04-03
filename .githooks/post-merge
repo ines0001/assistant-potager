@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# .githooks/post-merge
+# ─────────────────────────────────────────────────────────────────────────────
+# Déclenché automatiquement après chaque `git pull` (ou `git merge`) réussi.
+# Lance update_dev.ps1 si requirements.txt ou des migrations SQL ont changé.
+#
+# Activation (une seule fois, dans le projet) :
+#   git config core.hooksPath .githooks
+# ─────────────────────────────────────────────────────────────────────────────
+
+CHANGED=$(git diff ORIG_HEAD HEAD --name-only 2>/dev/null)
+
+NEEDS_UPDATE=false
+
+echo "$CHANGED" | grep -q "^requirements\.txt$"    && NEEDS_UPDATE=true
+echo "$CHANGED" | grep -q "^migrations/"           && NEEDS_UPDATE=true
+
+if [ "$NEEDS_UPDATE" = "true" ]; then
+    echo ""
+    echo "🌿  Changements détectés (requirements ou migrations) — lancement de update_dev.ps1..."
+    echo ""
+    # Compatibilité Windows (Git Bash / pwsh)
+    if command -v pwsh &>/dev/null; then
+        pwsh -NonInteractive -File "$(dirname "$0")/../update_dev.ps1" -SkipPull
+    elif command -v powershell &>/dev/null; then
+        powershell -NonInteractive -ExecutionPolicy Bypass -File "$(dirname "$0")/../update_dev.ps1" -SkipPull
+    else
+        echo "⚠  PowerShell introuvable. Lancez manuellement : .\\update_dev.ps1 -SkipPull"
+    fi
+fi

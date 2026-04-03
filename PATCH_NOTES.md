@@ -1,3 +1,49 @@
+
+## [v2.8.2] — 2026-04-03
+
+### 🐛 Corrections
+- Corrige `calcul_semis` dans `utils/stock.py` : l'agrégation des récoltes écrasait les entrées précédentes au lieu de les accumuler quand une même culture avait des récoltes en unités différentes (ex : 1.0 kg puis 500 g pour les carottes) — la carotte passe de "500.0 g récoltés (1 fois)" à "1.5 kg récoltés (2 fois)"
+
+### 🔧 Améliorations techniques
+- Normalise les unités de récolte en grammes lors de l'addition (kg→g, g→g), puis restitue dans l'unité la plus lisible (kg si ≥ 1000 g, sinon g)
+
+## [v2.8.1] — 2026-04-03
+
+### 🐛 Corrections
+- Corrige `calcul_semis` dans `utils/stock.py` : le GROUP BY sur `(culture, unite)` causait un sous-comptage des semis quand une même culture avait des enregistrements avec des unités différentes (ex : NULL et 'graines') — radis passait de 1 à 3 semis (valeur réelle)
+
+## [v2.8.0] — 2026-04-03
+
+### 🚀 Nouveautés
+- Ajoute la synthèse des semis dans les statistiques Telegram, classés par type de récolte (végétatif / reproducteur) avec les récoltes déjà réalisées (US_Afficher_synthese_semis_dans_stats)
+- Supprime le compteur "Total : X événements" de l'en-tête des statistiques
+
+### 🔧 Améliorations techniques
+- Ajoute la fonction `calcul_semis` dans `utils/stock.py` pour agréger les semis et les croiser avec les récoltes existantes
+
+## [v2.7.0] — 2026-04-03
+
+### 🚀 Nouveautés
+- Ajoute `update_dev.ps1` : script PowerShell de mise à jour automatique de l'environnement de développement (pip + migrations SQL)
+- Ajoute `.githooks/post-merge` : hook git qui déclenche `update_dev.ps1` automatiquement après chaque `git pull` si `requirements.txt` ou les migrations changent
+
+### 🐛 Corrections
+- Corrige `migration_v6.sql` : suppression du double `ON CONFLICT` invalide en PostgreSQL qui empêchait l'insertion des 46 nouvelles cultures
+- Corrige `update_dev.ps1` : ajout de `-v ON_ERROR_STOP=1` sur psql pour détecter les vraies erreurs SQL (les NOTICE ne bloquent plus le script)
+
+### 🔧 Améliorations techniques
+- Ajoute `.migrations_applied` au `.gitignore` (fichier de suivi local des migrations déjà jouées en dev)
+
+## [v2.5.0] — 2026-04-03
+
+### 🚀 Nouveautés
+- Ajoute un bouton « Corriger » dans le menu Telegram pour accéder directement au mode modification (US-011)
+
+## [v2.6.0] — 2026-04-03
+
+### 🗃️ Données
+- Ajout de la migration_v6.sql : insertion de 46 nouvelles cultures Île-de-France (ids 100-145) dans la table culture_config. Les cultures existantes (1-90) ne sont pas modifiées. Script idempotent (ON CONFLICT DO NOTHING).
+
 # Patch — Déploiement automatisé Scaleway (US-005)
 
 **Version :** v2.4.0 — 2 avril 2026  

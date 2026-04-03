@@ -192,6 +192,94 @@ def format_stock_ligne_telegram(s: StockCulture) -> str:
         return base + f" ({', '.join(details)})"
 
 
+def calcul_semis(db: Session) -> Dict[str, dict]:
+    """
+    Agrège les semis par culture et croise avec les récoltes déjà réalisées.
+    Retourne un dict { culture: { nb_semis, total_seme, unite, type_organe,
+                                  nb_recoltes, total_recolte, unite_recolte } }
+    """
+    # Grouper uniquement par culture (pas par unite) pour compter tous les semis
+    # même si l'unité varie ou est absente selon les enregistrements
+    semis_raw = (
+        db.query(
+            Evenement.culture,
+            func.count(Evenement.id),
+            func.sum(Evenement.quantite),
+        )
+        .filter(Evenement.type_action == "semis")
+        .filter(Evenement.culture.isnot(None))
+        .group_by(Evenement.culture)
+        .all()
+    )
+    if not semis_raw:
+        return {}
+
+    # Récupérer la première unité non-nulle par culture
+    unites_raw = (
+        db.query(Evenement.culture, Evenement.unite)
+        .filter(Evenement.type_action == "semis")
+        .filter(Evenement.culture.isnot(None))
+        .filter(Evenement.unite.isnot(None))
+        .distinct(Evenement.culture)
+        .all()
+    )
+    unites: Dict[str, str] = {c: u for c, u in unites_raw}
+
+    recoltes_raw = (
+        db.query(
+            Evenement.culture,
+            Evenement.unite,
+            func.count(Evenement.id),
+            func.sum(Evenement.quantite)
+        )
+        .filter(Evenement.type_action == "recolte")
+        .filter(Evenement.culture.isnot(None))
+        .group_by(Evenement.culture, Evenement.unite)
+        .all()
+    )
+
+    # Normalisation des unités en grammes pour pouvoir additionner correctement
+    # quand une même culture a des récoltes avec des unités différentes (kg, g, etc.)
+    _UNITE_TO_G = {"kg": 1000.0, "g": 1.0, "mg": 0.001}
+
+    def _to_g(val: float, unite: str) -> float:
+        return val * _UNITE_TO_G.get((unite or "").lower(), 1.0)
+
+    def _best_unite(total_g: float) -> tuple:
+        """Retourne (valeur, unite) la plus lisible."""
+        if total_g >= 1000:
+            return round(total_g / 1000, 2), "kg"
+        return round(total_g, 1), "g"
+
+    recoltes_g: Dict[str, tuple] = {}   # culture → (nb, total_en_grammes, unite_originale)
+    for culture, unite, nb, total in recoltes_raw:
+        val_g = _to_g(total or 0.0, unite)
+        if culture in recoltes_g:
+            prev_nb, prev_g, _ = recoltes_g[culture]
+            recoltes_g[culture] = (prev_nb + nb, prev_g + val_g, unite or "")
+        else:
+            recoltes_g[culture] = (nb, val_g, unite or "")
+
+    recoltes: Dict[str, tuple] = {}
+    for culture, (nb, total_g, _) in recoltes_g.items():
+        val, unite_out = _best_unite(total_g)
+        recoltes[culture] = (nb, val, unite_out)
+
+    result: Dict[str, dict] = {}
+    for culture, nb, total in semis_raw:
+        rec = recoltes.get(culture, (0, 0.0, ""))
+        result[culture] = {
+            "nb_semis":      nb,
+            "total_seme":    total,        # None si toutes les quantites sont absentes
+            "unite":         unites.get(culture, "graines"),
+            "type_organe":   get_type_organe(db, culture),
+            "nb_recoltes":   rec[0],
+            "total_recolte": rec[1],
+            "unite_recolte": rec[2],
+        }
+    return dict(sorted(result.items()))
+
+
 def format_stock_stats_json(stocks: Dict[str, StockCulture]) -> dict:
     """
     [US-002 / CA4] Retourne les données de stock sous forme JSON pour l'API /stats.
