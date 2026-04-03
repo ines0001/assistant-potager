@@ -26,6 +26,7 @@ jobs:
         run: |
           ssh ${{ secrets.SCALEWAY_USER }}@${{ secrets.SCALEWAY_HOST }} "
             set -euo pipefail
+            mkdir -p /opt/potager
             cd /opt/potager
             git fetch origin
             git checkout main
