@@ -1,0 +1,13 @@
+-- migration_v9.sql — recolte_finale : clôture de culture
+-- =======================================================
+-- Aucun changement de schéma requis.
+-- recolte_finale est stocké dans la colonne type_action existante des evenements.
+-- Ce fichier sert de point de référence pour la version 9.
+--
+-- Vérification : lister les types d'action présents en base
+-- SELECT DISTINCT type_action FROM evenements ORDER BY type_action;
+--
+-- Valeurs attendues après migration :
+--   arrosage | desherbage | fertilisation | mise_en_godet | observation
+--   paillage | perte | plantation | protection | recolte
+--   recolte_finale | recolte_graines | semis | taille | traitement | tuteurage

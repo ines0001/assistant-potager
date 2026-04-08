@@ -3,8 +3,22 @@ from __future__ import annotations
 import re
 from unidecode import unidecode
 
-# 12 actions canoniques (80% potager)
+# Actions canoniques (potager)
+# IMPORTANT : recolte_graines DOIT précéder recolte pour éviter un faux match
+# startswith("recolte") sur "recolte graines".
 ACTION_MAP: dict[str, list[str]] = {
+    "recolte_graines": [
+        "recolte graines", "recolter graines", "recolte de graines",
+        "graines recoltees", "graines recoltes",
+        "recolte semences", "recolter semences", "semences recoltees",
+        "ramasse graines", "ramasse les graines", "cueilli graines",
+    ],
+    # [US-recolte_finale] DOIT précéder "recolte" pour éviter faux match startswith
+    "recolte_finale": [
+        "recolte finale", "recolter finale", "derniere recolte", "dernier recolte",
+        "fin de culture", "fin culture", "recolte de fin", "recolte definitive",
+        "cloturer culture", "cloture culture", "recolte et cloture",
+    ],
     "recolte": [
         "recolte", "recolter", "recolte de", "recolte des",
         "cueillir", "cueilli", "cueillie",

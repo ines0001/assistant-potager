@@ -73,6 +73,11 @@ ACTION_KEYWORDS = {
     "planté"       : "plantation",
     "planter"      : "plantation",
     "plantation"   : "plantation",
+    # [US-recolte_finale] Doit précéder les entrées "recolte" pour éviter faux match
+    "récolte finale"      : "recolte_finale",
+    "récolter finalement" : "recolte_finale",
+    "fin de culture"      : "recolte_finale",
+    "récolte définitive"  : "recolte_finale",
     "récolté"      : "recolte",
     "récolter"     : "recolte",
     "récolte"      : "recolte",
@@ -108,6 +113,11 @@ ACTION_KEYWORDS = {
     "mort"         : "perte",
     "arraché"      : "perte",
     "crevé"        : "perte",
+    "graines récoltées": "recolte_graines",
+    "récolté graines"  : "recolte_graines",
+    "récolter graines" : "recolte_graines",
+    "récolte graines"  : "recolte_graines",
+    "semences récoltées": "recolte_graines",
 }
 
 # ── Légumes connus ────────────────────────────────────────────────────────────
@@ -512,7 +522,7 @@ Classe ce message dans UNE SEULE catégorie parmi :
 - SUPPRIMER   : veut supprimer ou effacer un enregistrement
 - MENU        : veut revenir au menu, accueil, annuler
 - NOUVELLE    : veut saisir une nouvelle action (après une autre)
-- ACTION      : décrit une action potager réellement RÉALISÉE à enregistrer (récolte, semis, plantation, arrosage, paillage, traitement, observation, fertilisation, taille, tuteurage, repiquage, désherbage, perte, mise_en_godet)
+- ACTION      : décrit une action potager réellement RÉALISÉE à enregistrer (récolte, semis, plantation, arrosage, paillage, traitement, observation, fertilisation, taille, tuteurage, repiquage, désherbage, perte, mise_en_godet, recolte_graines)
 
 RÈGLE IMPORTANTE : si le message contient "afficher", "montrer", "voir", "liste", "consulter", "quand", "combien", "quel" → c'est INTERROGER ou HISTORIQUE, jamais ACTION.
 
@@ -709,6 +719,7 @@ async def _parse_multi(update, lignes: list, msg=None):
                     date              = parse_date(parsed.get("date")),
                     nb_graines_semees = _to_int(parsed.get("nb_graines_semees")),
                     nb_plants_godets  = _to_int(parsed.get("nb_plants_godets")),
+                    origine_graines_id = _to_int(parsed.get("origine_graines_id")),
                 )
                 db.add(event)
                 db.commit()
@@ -819,6 +830,7 @@ async def _parse_and_save(update: Update, texte: str, msg=None):
                 date              = parse_date(parsed.get("date")),
                 nb_graines_semees = _to_int(parsed.get("nb_graines_semees")),
                 nb_plants_godets  = _to_int(parsed.get("nb_plants_godets")),
+                origine_graines_id = _to_int(parsed.get("origine_graines_id")),
             )
             db.add(event)
             db.commit()
@@ -1015,9 +1027,11 @@ async def cmd_stats(update, ctx):
         stocks = calcul_stock_cultures(db)
 
         if stocks:
-            # [US-003 / CA3] Séparer végétatif et reproducteur
-            veg_stocks  = {c: s for c, s in stocks.items() if not s.is_reproducteur}
-            repr_stocks = {c: s for c, s in stocks.items() if s.is_reproducteur}
+            # [US-003 / CA3] Séparer végétatif et reproducteur (cultures actives uniquement)
+            # [US-recolte_finale / CA4] Exclure les cultures clôturées des sections actives
+            veg_stocks    = {c: s for c, s in stocks.items() if not s.is_reproducteur and not s.cloturee}
+            repr_stocks   = {c: s for c, s in stocks.items() if s.is_reproducteur and not s.cloturee}
+            closed_stocks = {c: s for c, s in stocks.items() if s.cloturee}
 
             # [US-003 / CA1] Section végétatif — "cultures à récolte unique"
             if veg_stocks:
@@ -1029,6 +1043,12 @@ async def cmd_stats(update, ctx):
             if repr_stocks:
                 lines_out.append("\n🍅 *Cultures reproductrices (récolte continue) :*")
                 for culture, s in repr_stocks.items():
+                    lines_out.append("  " + format_stock_ligne_telegram(s))
+
+            # [US-recolte_finale / CA4&CA5] Section cultures clôturées
+            if closed_stocks:
+                lines_out.append("\n📦 *Cultures clôturées (bilan saison) :*")
+                for culture, s in closed_stocks.items():
                     lines_out.append("  " + format_stock_ligne_telegram(s))
 
         else:

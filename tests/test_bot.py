@@ -41,7 +41,7 @@ class TestCmdStats:
 
         # Vérifier
         call_args = mock_message.reply_text.call_args[0][0]
-        assert "🌱 *Stock plants actuel :*" in call_args
+        assert "🥬 *Cultures végétatives (récolte destructive) :*" in call_args
         assert "tomate : *10 plants* (planté 12, perdu 2)" in call_args
         assert "carotte : *50 graines*" in call_args
 
@@ -75,7 +75,7 @@ class TestCmdStats:
 
         # Vérifier
         call_args = mock_message.reply_text.call_args[0][0]
-        assert "🌱 *Stock plants actuel :*" in call_args
+        assert "🥬 *Cultures végétatives (récolte destructive) :*" in call_args
         assert "salade : *19 plants* (planté 25, perdu 4, récolté 2)" in call_args
 
     @patch('bot.send_voice_reply', new_callable=AsyncMock)

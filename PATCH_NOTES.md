@@ -1,4 +1,37 @@
 
+## [v2.12.0] — 2026-04-08
+
+### 🚀 Nouveautés
+- Ajoute l'action `recolte_finale` pour enregistrer la dernière récolte et clôturer une culture (US_Enregistrer_recolte_finale_cloture)
+- Ajoute une section "📦 Cultures clôturées" dans `/stats` affichant le bilan complet : rendement total, durée de culture et nombre de récoltes
+
+### 🔧 Améliorations techniques
+- Insère `recolte_finale` avant `recolte` dans `ACTION_MAP` et `ACTION_KEYWORDS` pour éviter les faux matches (synonymes : "fin de culture", "récolte définitive", "dernière récolte", "clôture culture")
+- Ajoute `recolte_finale` dans `PARSE_PROMPT` (Groq) avec exemple JSON
+- Ajoute 4 champs sur `StockCulture` : `cloturee`, `date_plantation`, `date_cloture`, `recolte_finale_qte` ; `stock_plants` retourne 0 si la culture est clôturée
+- Agrège les quantités `recolte_finale` séparément dans `calcul_stock_cultures` et formate la ligne Telegram avec le bilan complet
+
+### 💾 Base de données
+- Ajoute `migration_v9.sql` (documentaire) : `recolte_finale` utilise la colonne `type_action` existante, aucun schéma modifié
+
+## [v2.11.0] — 2026-04-08
+
+### 🚀 Nouveautés
+- Ajoute le type d'action `recolte_graines` reconnu en vocal et en texte pour enregistrer une récolte de semences (quantité en g, variété, culture, date) (US_Tracer_cycle_graines)
+- Ajoute le champ `origine_graines_id` (FK nullable) sur les semis pour référencer la récolte de graines à l'origine du semis, permettant la traçabilité généalogique des variétés
+
+### 🐛 Corrections
+- Corrige la priorité de détection : `recolte_graines` est évalué avant `recolte` dans `normalize_action` pour éviter la mauvaise classification des récoltes de semences
+
+### 🔧 Améliorations techniques
+- Exclut `recolte_graines` du calcul du stock de récolte alimentaire (`calcul_stock_cultures`) (CA5)
+- Met à jour `PARSE_PROMPT` et `INTENT_PROMPT` (Groq) avec l'action `recolte_graines`, le champ `origine_graines_id` et un exemple Gherkin
+- Ajoute `origine_graines_id` dans `build_reduced_context` pour alimenter les questions analytiques de généalogie variétale
+
+### 💾 Base de données
+- Ajoute `migration_v8.sql` : colonne `origine_graines_id INTEGER` (FK nullable vers `evenements.id`) sur la table `evenements`
+- Ajoute la colonne `origine_graines_id` dans le modèle SQLAlchemy `Evenement`
+
 ## [v2.10.0] — 2026-04-08
 
 ### 🚀 Nouveautés

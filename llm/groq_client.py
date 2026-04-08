@@ -29,7 +29,7 @@ def _today_context() -> str:
 INTENT_PROMPT = """Tu es un assistant assistant potager spécialisé dans l'analyse de questions en langage naturel.
 Donne uniquement du JSON sans texte additionnel, sans guillemets, avec ces champs:
 {
-  "action": "semis|plantation|arrosage|recolte|repiquage|traitement|desherbage|taille|paillage|observation|perte|null",
+  "action": "semis|plantation|arrosage|recolte|repiquage|traitement|desherbage|taille|paillage|observation|perte|recolte_graines|null",
   "culture": string|null,  # nom du légume au singulier minuscule, sinon null
   "date_from": string|null  # date ISO ou null
 }
@@ -82,7 +82,7 @@ Si une information n'est pas mentionnée, mets null. Ne jamais inventer.
 
 Champs à extraire :
 {{
-  "action"           : string,   // recolte | semis | repiquage | arrosage | fertilisation | traitement | desherbage | taille | paillage | observation | plantation | tuteurage | perte | mise_en_godet
+  "action"           : string,   // recolte | recolte_finale | semis | repiquage | arrosage | fertilisation | traitement | desherbage | taille | paillage | observation | plantation | tuteurage | perte | mise_en_godet | recolte_graines
   "culture"          : string,   // légume au singulier minuscule ("tomates" → "tomate")
   "variete"          : string,   // variété ou couleur ("rouge", "nantaise"...)
   "quantite"         : number,   // quantité numérique (PAR RANG si rang mentionné)
@@ -95,6 +95,7 @@ Champs à extraire :
   "commentaire"      : string,   // toute autre observation utile
   "nb_graines_semees": number,   // pour mise_en_godet : nombre de graines semees initialement
   "nb_plants_godets" : number    // pour mise_en_godet : nombre de plants obtenus en godet
+  "origine_graines_id": number   // pour semis : id de la recolte_graines source si mentionné (ex: "graines id 42", "mes graines de l'an dernier" → null si inconnu)
 }}
 
 Exemples :
@@ -123,7 +124,16 @@ Exemples :
 → [{{"action":"plantation","culture":"oignon","variete":"blanc","quantite":15,"unite":"plants","date":"{yesterday}","parcelle":null,"rang":null,"duree_minutes":null,"traitement":null,"commentaire":null}},{{"action":"plantation","culture":"radis","variete":null,"quantite":10,"unite":"plants","date":"{yesterday}","parcelle":null,"rang":null,"duree_minutes":null,"traitement":null,"commentaire":null}}]
 
 "Mis en godet 24 tomates cerise sur 30 graines semées"
-→ {{"action":"mise_en_godet","culture":"tomate","variete":"cerise","quantite":null,"unite":null,"date":null,"parcelle":null,"rang":null,"duree_minutes":null,"traitement":null,"variete":"cerise","commentaire":null,"nb_graines_semees":30,"nb_plants_godets":24}}
+→ {{"action":"mise_en_godet","culture":"tomate","variete":"cerise","quantite":null,"unite":null,"date":null,"parcelle":null,"rang":null,"duree_minutes":null,"traitement":null,"variete":"cerise","commentaire":null,"nb_graines_semees":30,"nb_plants_godets":24,"origine_graines_id":null}}
+
+"Récolté graines tomates cœur de bœuf 15 g"
+→ {{"action":"recolte_graines","culture":"tomate","variete":"coeur de boeuf","quantite":15,"unite":"g","date":null,"parcelle":null,"rang":null,"duree_minutes":null,"traitement":null,"commentaire":null,"nb_graines_semees":null,"nb_plants_godets":null,"origine_graines_id":null}}
+
+"Semis tomates coeur de boeuf avec graines id 42"
+→ {{"action":"semis","culture":"tomate","variete":"coeur de boeuf","quantite":null,"unite":null,"date":null,"parcelle":null,"rang":null,"duree_minutes":null,"traitement":null,"commentaire":null,"nb_graines_semees":null,"nb_plants_godets":null,"origine_graines_id":42}}
+
+"Récolte finale tomates cerise parcelle nord 1.2 kg fin de culture"
+→ {{"action":"recolte_finale","culture":"tomate cerise","variete":null,"quantite":1.2,"unite":"kg","date":null,"parcelle":"nord","rang":null,"duree_minutes":null,"traitement":null,"commentaire":"fin de culture","nb_graines_semees":null,"nb_plants_godets":null,"origine_graines_id":null}}
 
 Retourne UNIQUEMENT le JSON brut, sans texte ni backticks.
 Si plusieurs cultures dans la même phrase → tableau de JSONs.

@@ -17,6 +17,7 @@ Cette logique est centralisée ici pour être partagée entre bot.py et main.py.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date as _date
 from typing import Dict, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -39,17 +40,26 @@ class StockCulture:
 
     # Récoltes
     nb_recoltes:         int   = 0
-    recoltes_total:      float = 0.0    # somme quantités récoltées
+    recoltes_total:      float = 0.0    # somme quantités récoltées (partielles)
     unite_recolte:       str   = ""
+
+    # [US-recolte_finale] Clôture de culture
+    cloturee:            bool         = False  # True si recolte_finale enregistrée
+    date_plantation:     Optional[str] = None  # date plantation la plus ancienne (ISO)
+    date_cloture:        Optional[str] = None  # date recolte_finale pour durée CA5
+    recolte_finale_qte:  float        = 0.0    # quantité récoltée lors de la clôture
 
     @property
     def stock_plants(self) -> float:
         """
         [US-002 / CA1 & CA2]
+        - clôturée     : stock = 0 (culture terminée)
         - végétatif    : stock = plantations - pertes - récoltes
         - reproducteur : stock = plantations - pertes  (récoltes indépendantes)
         - inconnu      : même logique que végétatif (conservateur)
         """
+        if self.cloturee:
+            return 0.0
         if self.type_organe == "reproducteur":
             return max(0.0, self.plants_plantes - self.plants_perdus)
         # végétatif ou inconnu
@@ -102,6 +112,18 @@ def calcul_stock_cultures(db: Session) -> Dict[str, StockCulture]:
     if not plantes:
         return {}
 
+    # ── 1b. Date de plantation la plus ancienne par culture ─────────────────
+    dates_plantation_raw = (
+        db.query(Evenement.culture, func.min(Evenement.date))
+        .filter(Evenement.type_action == "plantation")
+        .filter(Evenement.culture.isnot(None))
+        .group_by(Evenement.culture)
+        .all()
+    )
+    dates_plantation: Dict[str, Optional[str]] = {
+        c: (str(d)[:10] if d else None) for c, d in dates_plantation_raw
+    }
+
     # ── 2. Pertes par culture ───────────────────────────────────────────────
     pertes_raw = (
         db.query(Evenement.culture, func.sum(Evenement.quantite))
@@ -133,21 +155,49 @@ def calcul_stock_cultures(db: Session) -> Dict[str, StockCulture]:
         else:
             recoltes[culture] = (nb, total or 0, unite or "")
 
+    # ── 3b. Récoltes finales par culture (clôture) ──────────────────────────
+    recoltes_finales_raw = (
+        db.query(
+            Evenement.culture,
+            Evenement.unite,
+            func.sum(Evenement.quantite),
+            func.max(Evenement.date)
+        )
+        .filter(Evenement.type_action == "recolte_finale")
+        .filter(Evenement.culture.isnot(None))
+        .group_by(Evenement.culture, Evenement.unite)
+        .all()
+    )
+    recoltes_finales: Dict[str, tuple] = {}  # culture → (qte, unite, date_cloture)
+    for culture, unite, total, date_rec in recoltes_finales_raw:
+        existing = recoltes_finales.get(culture)
+        if existing:
+            date_max = max(existing[2], date_rec) if existing[2] and date_rec else (existing[2] or date_rec)
+            recoltes_finales[culture] = (existing[0] + (total or 0), unite or existing[1], date_max)
+        else:
+            recoltes_finales[culture] = (total or 0, unite or "", date_rec)
+
     # ── 4. Construction des objets StockCulture ─────────────────────────────
     result: Dict[str, StockCulture] = {}
     for culture, (total_plants, unite) in sorted(plantes.items()):
         type_organe = get_type_organe(db, culture)
         rec = recoltes.get(culture, (0, 0.0, ""))
+        rec_finale = recoltes_finales.get(culture)
 
         stock = StockCulture(
-            culture         = culture,
-            unite           = unite or "plants",
-            type_organe     = type_organe,
-            plants_plantes  = total_plants,
-            plants_perdus   = pertes.get(culture, 0.0),
-            nb_recoltes     = rec[0],
-            recoltes_total  = rec[1],
-            unite_recolte   = rec[2],
+            culture            = culture,
+            unite              = unite or "plants",
+            type_organe        = type_organe,
+            plants_plantes     = total_plants,
+            plants_perdus      = pertes.get(culture, 0.0),
+            nb_recoltes        = rec[0],
+            recoltes_total     = rec[1],
+            unite_recolte      = rec_finale[1] if rec_finale and rec_finale[1] else rec[2],
+            # [US-recolte_finale] champs clôture
+            cloturee           = rec_finale is not None,
+            date_plantation    = dates_plantation.get(culture),
+            date_cloture       = (str(rec_finale[2])[:10] if rec_finale and rec_finale[2] else None),
+            recolte_finale_qte = rec_finale[0] if rec_finale else 0.0,
         )
         result[culture] = stock
 
@@ -165,6 +215,19 @@ def format_stock_ligne_telegram(s: StockCulture) -> str:
     """
     stock = int(s.stock_plants)
     unite = s.unite
+
+    # [US-recolte_finale / CA4&CA5] Culture clôturée : bilan de saison
+    if s.cloturee:
+        nb_total  = s.nb_recoltes + (1 if s.recolte_finale_qte > 0 else 0)
+        total_rec = round(s.recoltes_total + s.recolte_finale_qte, 2)
+        u         = s.unite_recolte or "unités"
+        base      = f"• {s.culture} : _(clôturée)_ · rendement *{total_rec} {u}* ({nb_total} récoltes)"
+        if s.date_plantation and s.date_cloture:
+            d1    = _date.fromisoformat(s.date_plantation[:10])
+            d2    = _date.fromisoformat(s.date_cloture[:10])
+            duree = (d2 - d1).days
+            base += f", durée *{duree} j*"
+        return base
 
     if s.is_reproducteur:
         # Stock = plantes vivantes ; récoltes = rendement cumulé

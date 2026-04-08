@@ -23,7 +23,7 @@ def extract_question_intent(question: str) -> dict:
     # Actions identifiables
     for a in [
         "arrosage", "semis", "plantation", "recolte", "repiquage", "traitement",
-        "desherbage", "taille", "paillage", "observation"
+        "desherbage", "taille", "paillage", "observation", "recolte_graines"
     ]:
         if a in q:
             intent["action"] = a
@@ -101,6 +101,7 @@ def build_reduced_context(events: list[Evenement]) -> str:
             "duree_minutes": e.duree,
             "traitement": e.traitement,
             "commentaire": e.commentaire,
+            "origine_graines_id": e.origine_graines_id,
         })
 
     # Max 50 éléments pour conserver faible token usage

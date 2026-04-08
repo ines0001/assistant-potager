@@ -4,7 +4,7 @@ database/models.py — Modèles SQLAlchemy pour l'Assistant Potager
 [US-001] Ajout colonne type_organe_recolte sur Evenement
 [US-001] Ajout modèle CultureConfig (table culture_config)
 """
-from sqlalchemy import Column, Integer, String, Float, DateTime
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey
 from database.db import Base
 
 
@@ -46,6 +46,9 @@ class Evenement(Base):
     # [US_Enregistrer_mise_en_godet] Pépinière : nb graines semées → nb plants obtenus
     nb_graines_semees   = Column(Integer, nullable=True)
     nb_plants_godets    = Column(Integer, nullable=True)
+
+    # [US_Tracer_cycle_graines] Lien semis → recolte_graines source (FK nullable)
+    origine_graines_id  = Column(Integer, ForeignKey("evenements.id", ondelete="SET NULL"), nullable=True)
 
 
 class CultureConfig(Base):
