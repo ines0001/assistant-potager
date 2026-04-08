@@ -17,7 +17,8 @@ Cette logique est centralisée ici pour être partagée entre bot.py et main.py.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from datetime import datetime
+from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
@@ -305,3 +306,204 @@ def format_stock_stats_json(stocks: Dict[str, StockCulture]) -> dict:
             entry["nb_recoltes"]     = s.nb_recoltes
         result.append(entry)
     return result
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# [US_Stats_detail_par_variete] Détail par variété
+# ══════════════════════════════════════════════════════════════════════════════
+
+def calcul_stock_par_variete(db: Session, culture: str) -> List[dict]:
+    """
+    [US_Stats_detail_par_variete / CA3, CA4, CA5, CA6, CA7]
+    Agrège les événements par variété pour une culture donnée.
+
+    Filtre insensible à la casse via func.lower().
+    Retourne [] si aucune plantation trouvée pour cette culture.
+
+    Champs de chaque dict :
+      variete, plants_plantes, plants_perdus, nb_recoltes, recoltes_total,
+      unite_recolte, unite_plant, type_organe,
+      date_premiere_plantation, date_derniere_recolte
+    """
+    culture_lower = culture.lower()
+
+    # ── 1. Plantations brutes (pour recalculer qte × rang en Python) ────────
+    plantations_raw = (
+        db.query(
+            Evenement.variete,
+            Evenement.unite,
+            Evenement.quantite,
+            Evenement.rang,
+            Evenement.date,
+        )
+        .filter(func.lower(Evenement.culture) == culture_lower)
+        .filter(Evenement.type_action == "plantation")
+        .all()
+    )
+
+    # [CA6] Culture inconnue → liste vide
+    if not plantations_raw:
+        return []
+
+    # ── 2. Pertes par variété ────────────────────────────────────────────────
+    pertes_raw = (
+        db.query(Evenement.variete, func.sum(Evenement.quantite))
+        .filter(func.lower(Evenement.culture) == culture_lower)
+        .filter(Evenement.type_action == "perte")
+        .group_by(Evenement.variete)
+        .all()
+    )
+    pertes: Dict[Optional[str], float] = {v: (q or 0) for v, q in pertes_raw}
+
+    # ── 3. Récoltes brutes par variété (agrégation Python pour gérer multi-unités) ──
+    recoltes_raw = (
+        db.query(
+            Evenement.variete,
+            Evenement.unite,
+            Evenement.quantite,
+            Evenement.date,
+        )
+        .filter(func.lower(Evenement.culture) == culture_lower)
+        .filter(Evenement.type_action == "recolte")
+        .all()
+    )
+
+    # ── 4. type_organe depuis culture_config ────────────────────────────────
+    cfg = (
+        db.query(CultureConfig)
+        .filter(func.lower(CultureConfig.nom) == culture_lower)
+        .first()
+    )
+    type_organe: Optional[str] = cfg.type_organe_recolte if cfg else None
+
+    # ── 5. Agrégation plantations par variété ───────────────────────────────
+    plantes: Dict[Optional[str], dict] = {}
+    for variete, unite, qte, rang, date_ev in plantations_raw:
+        total = (qte or 0) * (rang or 1)
+        if variete in plantes:
+            plantes[variete]["total"] += total
+            if date_ev and (
+                plantes[variete]["date_min"] is None
+                or date_ev < plantes[variete]["date_min"]
+            ):
+                plantes[variete]["date_min"] = date_ev
+        else:
+            plantes[variete] = {
+                "total":    total,
+                "unite":    unite or "plants",
+                "date_min": date_ev,
+            }
+
+    # ── 6. Agrégation récoltes par variété ───────────────────────────────────
+    recoltes: Dict[Optional[str], dict] = {}
+    for variete, unite, qte, date_ev in recoltes_raw:
+        val = qte or 0
+        if variete in recoltes:
+            recoltes[variete]["nb"]    += 1
+            recoltes[variete]["total"] += val
+            if date_ev and (
+                recoltes[variete]["date_max"] is None
+                or date_ev > recoltes[variete]["date_max"]
+            ):
+                recoltes[variete]["date_max"] = date_ev
+        else:
+            recoltes[variete] = {
+                "nb":       1,
+                "total":    val,
+                "unite":    unite or "",
+                "date_max": date_ev,
+            }
+
+    # ── 7. Construction de la liste de résultats ─────────────────────────────
+    # [CA5] None regroupé comme "Variété non précisée"
+    result: List[dict] = []
+    for vkey in sorted(plantes.keys(), key=lambda v: ("" if v is None else v)):
+        p = plantes[vkey]
+        r = recoltes.get(vkey, {"nb": 0, "total": 0.0, "unite": "", "date_max": None})
+        result.append({
+            "variete":                  vkey if vkey is not None else "Variété non précisée",
+            "plants_plantes":           p["total"],
+            "plants_perdus":            pertes.get(vkey, 0.0),
+            "nb_recoltes":              r["nb"],
+            "recoltes_total":           r["total"],
+            "unite_recolte":            r["unite"],
+            "unite_plant":              p["unite"],
+            "type_organe":              type_organe,
+            "date_premiere_plantation": p["date_min"],
+            "date_derniere_recolte":    r["date_max"],
+        })
+
+    return result
+
+
+_MOIS_FR = [
+    "jan", "fév", "mar", "avr", "mai", "juin",
+    "juil", "aoû", "sep", "oct", "nov", "déc",
+]
+
+
+def _fmt_date_variete(dt: Optional[datetime], current_year: int) -> str:
+    """Formate une date en 'dd mmm' (même année) ou 'dd mmm YYYY'."""
+    if dt is None:
+        return "?"
+    mois = _MOIS_FR[dt.month - 1]
+    if dt.year == current_year:
+        return f"{dt.day:02d} {mois}"
+    return f"{dt.day:02d} {mois} {dt.year}"
+
+
+def format_variete_bloc_telegram(v: dict) -> str:
+    """
+    [US_Stats_detail_par_variete / CA4]
+    Formate un bloc variété pour /stats [culture] Telegram.
+
+    Respecte la logique reproducteur (récolte continue) vs végétatif (récolte destructive).
+    Format date : 'dd mmm' si même année, 'dd mmm YYYY' sinon.
+    'en cours' si date_derniere_recolte est None.
+    """
+    nom            = v["variete"]
+    plants_plantes = int(v["plants_plantes"])
+    plants_perdus  = int(v["plants_perdus"])
+    nb_recoltes    = v["nb_recoltes"]
+    recoltes_total = v["recoltes_total"]
+    unite_recolte  = v["unite_recolte"] or "unités"
+    unite_plant    = v["unite_plant"] or "plants"
+    type_organe    = v["type_organe"]
+    date_plantation = v["date_premiere_plantation"]
+    date_recolte    = v["date_derniere_recolte"]
+
+    is_repr      = (type_organe == "reproducteur")
+    current_year = datetime.now().year
+
+    lines = [f"🔸 *{nom}*"]
+
+    if is_repr:
+        # [CA4] Reproducteur : plants actifs + rendement kg
+        stock = max(0, plants_plantes - plants_perdus)
+        base  = f"  • {stock} {unite_plant} actifs"
+        if recoltes_total > 0:
+            r_val  = round(recoltes_total, 2)
+            base  += f" · {r_val} {unite_recolte} récoltés ({nb_recoltes} fois)"
+        lines.append(base)
+        details = [f"planté {plants_plantes}"]
+        if plants_perdus > 0:
+            details.append(f"perdu {plants_perdus}")
+        lines.append(f"    ({', '.join(details)})")
+    else:
+        # [CA4] Végétatif : récolte est destructive (réduit le stock)
+        stock = max(0, plants_plantes - plants_perdus - int(recoltes_total))
+        base  = f"  • {stock} {unite_plant}"
+        details = [f"planté {plants_plantes}"]
+        if plants_perdus > 0:
+            details.append(f"perdu {plants_perdus}")
+        if recoltes_total > 0:
+            details.append(f"récolté {int(recoltes_total)}")
+        lines.append(base + f" ({', '.join(details)})")
+
+    # [CA4] Période plantation → dernière récolte (ou "en cours")
+    if date_plantation:
+        date_debut = _fmt_date_variete(date_plantation, current_year)
+        date_fin   = _fmt_date_variete(date_recolte, current_year) if date_recolte else "en cours"
+        lines.append(f"  📅 {date_debut} → {date_fin}")
+
+    return "\n".join(lines)

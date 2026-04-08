@@ -1,4 +1,19 @@
 
+## [v2.11.0] — 2026-04-09
+
+### 🚀 Nouveautés
+- Ajoute `/stats [culture]` : affiche le détail par variété avec nombre de plants, quantité récoltée et période (date plantation → dernière récolte ou "en cours") (US_Stats_detail_par_variete)
+- Ajoute un hint en pied de `/stats` : "Pour le détail d'une variété : /stats [culture]"
+- Groupe les plants sans variété renseignée sous "Variété non précisée"
+- Retourne "Aucune donnée pour [culture]" si la culture est inconnue
+- Reconnaît la commande vocale "stats [culture]" et la redirige vers `/stats [culture]`
+
+### 🔧 Améliorations techniques
+- Ajoute `calcul_stock_par_variete(db, culture)` et `format_variete_bloc_telegram(v)` dans `utils/stock.py`
+- Ajoute `_extract_stats_culture(texte)` dans `bot.py` pour l'extraction de la culture depuis une commande vocale (CA8)
+- Modifie `cmd_stats` pour brancher sur le détail variété quand un argument culture est fourni
+- Insensible à la casse pour le nom de la culture
+
 ## [v2.10.0] — 2026-04-08
 
 ### 🚀 Nouveautés

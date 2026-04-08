@@ -389,6 +389,13 @@ async def handle_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # ── 6. Routage selon intent ────────────────────────────────────────────────
     if intent == "STATS":
         await msg.edit_text("📊 *Statistiques*", parse_mode="Markdown")
+        # [US_Stats_detail_par_variete / CA8] Détecter "stats <culture>" vocal
+        culture_vocal = _extract_stats_culture(texte)
+        if culture_vocal:
+            log.info(f"📊 STATS VOCAL VARIETE : culture='{culture_vocal}'")
+            ctx.args = [culture_vocal]
+        else:
+            ctx.args = []
         await cmd_stats(update, ctx)
         return
     if intent == "HISTORIQUE":
@@ -552,6 +559,24 @@ def classify_intent(texte: str) -> str:
     except Exception as e:
         log.error(f"Erreur classify_intent : {e}")
         return "ACTION"  # fallback sûr
+
+
+def _extract_stats_culture(texte: str) -> str | None:
+    """
+    [US_Stats_detail_par_variete / CA8]
+    Extrait la culture depuis une phrase vocale type 'stats tomate'.
+
+    Exemples reconnus :
+      "stats tomate" → "tomate"
+      "statistiques de la tomate" → "tomate"
+      "stats" seul → None
+    """
+    import re
+    m = re.match(
+        r'^(?:stats?|statistiques?)\s+(?:de\s+(?:la\s+|les?\s+|des?\s+)?|du\s+)?(\w+)$',
+        texte.lower().strip(),
+    )
+    return m.group(1) if m else None
 
 
 async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -1004,11 +1029,63 @@ async def cmd_stats(update, ctx):
     [US-003 / CA3] Deux sections distinctes : végétatif vs reproducteur
     [US-002 / CA3] Calcul stock différencié selon type_organe_recolte
     [US-002 / CA4] Champs stock_plants + rendement_total distincts via /stats API
+    [US_Stats_detail_par_variete / CA1] Sans argument → synthèse générale inchangée
+    [US_Stats_detail_par_variete / CA3] Avec argument → détail par variété de la culture
     """
-    from utils.stock import calcul_stock_cultures, format_stock_ligne_telegram, calcul_semis
+    from utils.stock import (
+        calcul_stock_cultures, format_stock_ligne_telegram, calcul_semis,
+        calcul_stock_par_variete, format_variete_bloc_telegram,
+    )
+
+    # [US_Stats_detail_par_variete / CA7] Insensible à la casse
+    culture_arg: str | None = None
+    if ctx and getattr(ctx, "args", None):
+        culture_arg = ctx.args[0].lower()
 
     db = SessionLocal()
     try:
+        # ── [US_Stats_detail_par_variete / CA3] Mode détail variété ──────────
+        if culture_arg:
+            varietes = calcul_stock_par_variete(db, culture_arg)
+
+            # [CA6] Culture inconnue
+            if not varietes:
+                texte_final = f"_Aucune donnée pour {culture_arg}_"
+                try:
+                    await update.message.reply_text(
+                        texte_final, parse_mode="Markdown", reply_markup=MENU_KEYBOARD
+                    )
+                except Exception:
+                    await update.message.reply_text(texte_final, reply_markup=MENU_KEYBOARD)
+                return
+
+            # Emoji selon type_organe du premier résultat
+            type_organe = varietes[0]["type_organe"]
+            emoji = "🍅" if type_organe == "reproducteur" else "🥬"
+            culture_display = culture_arg.capitalize()
+
+            lines_out = [f"{emoji} *{culture_display} — détail par variété*\n"]
+            for v in varietes:
+                lines_out.append(format_variete_bloc_telegram(v))
+                lines_out.append("")  # ligne vide entre variétés
+
+            lines_out.append("_Pour revenir à la synthèse : /stats_")
+            texte_final = "\n".join(lines_out)
+
+            log.info(f"📊 STATS VARIETE  : culture='{culture_arg}', {len(varietes)} variété(s)")
+            try:
+                await update.message.reply_text(
+                    texte_final, parse_mode="Markdown", reply_markup=MENU_KEYBOARD
+                )
+            except Exception:
+                await update.message.reply_text(
+                    texte_final.replace("*", "").replace("_", ""),
+                    reply_markup=MENU_KEYBOARD,
+                )
+            await send_voice_reply(update, texte_final)
+            return
+
+        # ── [US_Stats_detail_par_variete / CA1] Mode synthèse (comportement existant) ──
         lines_out = ["📊 *Statistiques potager*\n"]
 
         # ── [US-002] Calcul stock agronomique différencié ──────────────────────
@@ -1087,6 +1164,9 @@ async def cmd_stats(update, ctx):
         )
         if nb_traitements:
             lines_out.append(f"\n💊 *Traitements :* {nb_traitements} applications")
+
+        # [US_Stats_detail_par_variete / CA2] Hint pour le détail par variété
+        lines_out.append("\n_Pour le détail d'une variété : /stats [culture]_")
 
         texte_final = "\n".join(lines_out)
 
