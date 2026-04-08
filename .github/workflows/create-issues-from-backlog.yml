@@ -8,11 +8,9 @@ on:
       - main
   workflow_dispatch:
 
-# ✅ AJOUTE CES PERMISSIONS
 permissions:
   contents: read
   issues: write
-  pull-requests: read
 
 jobs:
   create-issues:
@@ -21,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Create issues from backlog
+      - name: Create issues from backlog with labels
         uses: actions/github-script@v7
         with:
           script: |
@@ -35,11 +33,27 @@ jobs:
               const filePath = path.join(backlogDir, file);
               const content = fs.readFileSync(filePath, 'utf8');
               
+              // Extraire le titre (première ligne)
               const lines = content.split('\n');
               const title = lines[0].replace(/^#+\s+/, '').trim();
-              const body = content;
+              
+              // ✅ EXTRAIRE LES LABELS
+              let labels = ['us', 'backlog'];
+              const labelLine = content.match(/Labels GitHub\s*:\s*(.+)/i);
+              if (labelLine) {
+                const customLabels = labelLine[1]
+                  .split(',')
+                  .map(l => l.trim())
+                  .filter(l => l);
+                labels = [...new Set([...labels, ...customLabels])];
+              }
+              
+              console.log(`📝 Fichier: ${file}`);
+              console.log(`   Titre: ${title}`);
+              console.log(`   Labels: ${labels.join(', ')}`);
               
               try {
+                // Vérifier si l'issue existe déjà
                 const existingIssues = await github.rest.issues.listForRepo({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
@@ -51,19 +65,20 @@ jobs:
                 );
                 
                 if (!issueExists) {
+                  // ✅ CRÉER L'ISSUE AVEC LES LABELS EXTRAITS
                   const issue = await github.rest.issues.create({
                     owner: context.repo.owner,
                     repo: context.repo.repo,
                     title: title,
-                    body: body,
-                    labels: ['backlog', 'us']
+                    body: content,
+                    labels: labels  // Utilise les labels extraits
                   });
                   
-                  console.log(`✅ Issue créée : ${title} (#${issue.data.number})`);
+                  console.log(`✅ Issue créée: #${issue.data.number}`);
                 } else {
-                  console.log(`⏭️ Issue existante : ${title}`);
+                  console.log(`⏭️ Issue existante`);
                 }
               } catch (error) {
-                console.error(`❌ Erreur pour ${file}:`, error.message);
+                console.error(`❌ Erreur: ${error.message}`);
               }
             }
