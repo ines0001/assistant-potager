@@ -19,13 +19,75 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Create issues from backlog with labels
+      - name: Create issues from backlog with smart labels
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             const path = require('path');
             
+            // ✅ FONCTION DE COMPARAISON FUZZY (Levenshtein distance)
+            function fuzzyMatch(str1, str2, threshold = 0.8) {
+              const s1 = str1.toLowerCase().trim();
+              const s2 = str2.toLowerCase().trim();
+              
+              if (s1 === s2) return true;
+              
+              // Comparer la similarité
+              const longer = s1.length > s2.length ? s1 : s2;
+              const shorter = s1.length > s2.length ? s2 : s1;
+              
+              if (longer.length === 0) return true;
+              
+              const editDistance = getEditDistance(longer, shorter);
+              return (1.0 - editDistance / longer.length) >= threshold;
+            }
+            
+            function getEditDistance(s1, s2) {
+              const costs = [];
+              for (let i = 0; i <= s1.length; i++) {
+                let lastValue = i;
+                for (let j = 0; j <= s2.length; j++) {
+                  if (i === 0) {
+                    costs[j] = j;
+                  } else if (j > 0) {
+                    let newValue = costs[j - 1];
+                    if (s1.charAt(i - 1) !== s2.charAt(j - 1)) {
+                      newValue = Math.min(Math.min(newValue, lastValue), costs[j]) + 1;
+                    }
+                    costs[j - 1] = lastValue;
+                    lastValue = newValue;
+                  }
+                }
+                if (i > 0) costs[s2.length] = lastValue;
+              }
+              return costs[s2.length];
+            }
+            
+            // ✅ NETTOYER LES LABELS (supprimer guillemets, caractères spéciaux)
+            function cleanLabel(label) {
+              return label
+                .replace(/^["\*\*]+/, '')        // Supprimer guillemets et astérisques au début
+                .replace(/["\*\*]+$/, '')        // Supprimer guillemets et astérisques à la fin
+                .replace(/['"]/g, '')            // Supprimer tous les guillemets
+                .replace(/[\*\*]/g, '')          // Supprimer astérisques
+                .replace(/`/g, '')               // Supprimer backticks
+                .toLowerCase()
+                .trim();
+            }
+            
+            // Récupérer TOUS les labels existants du repo
+            console.log('📌 Récupération des labels existants...');
+            const labelsResponse = await github.rest.issues.listLabelsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100
+            });
+            
+            const existingLabels = labelsResponse.data.map(l => l.name.toLowerCase());
+            console.log(`✅ ${existingLabels.length} labels trouvés: ${existingLabels.join(', ')}`);
+            
+            // Traiter les fichiers du backlog
             const backlogDir = './backlog';
             const files = fs.readdirSync(backlogDir).filter(f => f.endsWith('.md'));
             
@@ -33,31 +95,68 @@ jobs:
               const filePath = path.join(backlogDir, file);
               const content = fs.readFileSync(filePath, 'utf8');
               
-              // Extraire le titre (première ligne)
+              // Extraire le titre
               const lines = content.split('\n');
               const title = lines[0].replace(/^#+\s+/, '').trim();
               
-              // ✅ EXTRAIRE LES LABELS
-              let labels = ['us', 'backlog'];
+              // ✅ EXTRAIRE ET NETTOYER LES LABELS
+              let rawLabels = ['us', 'backlog'];
               const labelLine = content.match(/Labels GitHub\s*:\s*(.+)/i);
+              
               if (labelLine) {
                 const customLabels = labelLine[1]
                   .split(',')
-                  .map(l => l.trim())
-                  .filter(l => l);
-                labels = [...new Set([...labels, ...customLabels])];
+                  .map(l => cleanLabel(l))
+                  .filter(l => l && l.length > 0);
+                rawLabels = [...rawLabels, ...customLabels];
+              }
+              
+              // ✅ DÉDUPLICATION ET FUZZY MATCHING
+              const uniqueLabels = [];
+              const seenClean = new Set();
+              
+              for (const label of rawLabels) {
+                const cleaned = cleanLabel(label);
+                
+                // Vérifier si ce label (nettoyé) est déjà dans notre liste
+                if (seenClean.has(cleaned)) {
+                  console.log(`   ⏭️ Doublon détecté et supprimé: "${label}"`);
+                  continue;
+                }
+                
+                // Chercher un label similaire dans les labels existants
+                let found = false;
+                for (const existing of existingLabels) {
+                  if (fuzzyMatch(cleaned, existing, 0.75)) {
+                    if (!uniqueLabels.includes(existing)) {
+                      uniqueLabels.push(existing);
+                      console.log(`   🔗 "${label}" → Label existant trouvé: "${existing}"`);
+                    }
+                    found = true;
+                    seenClean.add(cleaned);
+                    break;
+                  }
+                }
+                
+                // Si pas de match, garder le label nettoyé
+                if (!found) {
+                  uniqueLabels.push(cleaned);
+                  seenClean.add(cleaned);
+                  console.log(`   ✨ Nouveau label: "${cleaned}"`);
+                }
               }
               
               console.log(`📝 Fichier: ${file}`);
               console.log(`   Titre: ${title}`);
-              console.log(`   Labels: ${labels.join(', ')}`);
+              console.log(`   Labels finaux: ${uniqueLabels.join(', ')}`);
               
               try {
                 // Vérifier si l'issue existe déjà
                 const existingIssues = await github.rest.issues.listForRepo({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  state: 'all'
+                  state: 'all',
+                  per_page: 100
                 });
                 
                 const issueExists = existingIssues.data.some(issue => 
@@ -65,13 +164,12 @@ jobs:
                 );
                 
                 if (!issueExists) {
-                  // ✅ CRÉER L'ISSUE AVEC LES LABELS EXTRAITS
                   const issue = await github.rest.issues.create({
                     owner: context.repo.owner,
                     repo: context.repo.repo,
                     title: title,
                     body: content,
-                    labels: labels  // Utilise les labels extraits
+                    labels: uniqueLabels
                   });
                   
                   console.log(`✅ Issue créée: #${issue.data.number}`);
