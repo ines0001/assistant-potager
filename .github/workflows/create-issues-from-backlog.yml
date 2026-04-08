@@ -6,7 +6,13 @@ on:
       - 'backlog/*.md'
     branches:
       - main
-  workflow_dispatch:  # Permet de lancer manuellement
+  workflow_dispatch:
+
+# ✅ AJOUTE CES PERMISSIONS
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
 
 jobs:
   create-issues:
@@ -22,7 +28,6 @@ jobs:
             const fs = require('fs');
             const path = require('path');
             
-            // Lire tous les fichiers .md du dossier backlog
             const backlogDir = './backlog';
             const files = fs.readdirSync(backlogDir).filter(f => f.endsWith('.md'));
             
@@ -30,13 +35,11 @@ jobs:
               const filePath = path.join(backlogDir, file);
               const content = fs.readFileSync(filePath, 'utf8');
               
-              // Parser le fichier pour extraire titre et description
               const lines = content.split('\n');
               const title = lines[0].replace(/^#+\s+/, '').trim();
               const body = content;
               
               try {
-                // Vérifier si l'issue existe déjà
                 const existingIssues = await github.rest.issues.listForRepo({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
@@ -48,7 +51,6 @@ jobs:
                 );
                 
                 if (!issueExists) {
-                  // Créer l'issue
                   const issue = await github.rest.issues.create({
                     owner: context.repo.owner,
                     repo: context.repo.repo,
