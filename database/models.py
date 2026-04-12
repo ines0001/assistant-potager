@@ -4,7 +4,7 @@ database/models.py — Modèles SQLAlchemy pour l'Assistant Potager
 [US-001] Ajout colonne type_organe_recolte sur Evenement
 [US-001] Ajout modèle CultureConfig (table culture_config)
 """
-from sqlalchemy import Column, Integer, String, Float, DateTime
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey
 from database.db import Base
 
 
@@ -29,6 +29,7 @@ class Evenement(Base):
 
     # Localisation
     parcelle       = Column(String, index=True)
+    parcelle_id    = Column(Integer, ForeignKey("parcelles.id"), nullable=True, index=True)
     rang           = Column(Integer)   # [migration_v3] INTEGER (pas String)
 
     # Détails
@@ -64,3 +65,23 @@ class CultureConfig(Base):
     nom                     = Column(String, unique=True, index=True, nullable=False)
     type_organe_recolte     = Column(String, nullable=False)   # "végétatif" | "reproducteur"
     description_agronomique = Column(String)
+
+
+class Parcelle(Base):
+    """
+    [US_Plan_occupation_parcelles / CA8]
+    Représente une parcelle physique du potager.
+
+    - nom_normalise : forme canonique unique (strip + lower + unidecode + sans tirets/espaces)
+    - ordre         : position pour l'affichage trié du plan
+    - actif         : permet de désactiver sans supprimer
+    """
+    __tablename__ = "parcelles"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    nom           = Column(String, nullable=False)
+    nom_normalise = Column(String, unique=True, nullable=False, index=True)
+    exposition    = Column(String, nullable=True)
+    superficie_m2 = Column(Float, nullable=True)
+    ordre         = Column(Integer, default=0)
+    actif         = Column(Boolean, default=True, nullable=False)

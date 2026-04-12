@@ -1,4 +1,4 @@
-"""
+﻿"""
 bot.py — Bot Telegram pour l'Assistant Potager
 ------------------------------------------------
 Fonctionnalités :
@@ -52,6 +52,11 @@ from config import GROQ_API_KEY, DATABASE_URL, TELEGRAM_BOT_TOKEN, GROQ_WHISPER_
 from database.db import SessionLocal, Base, engine
 from database.models import Evenement
 from utils.actions import normalize_action
+from utils.parcelles import (
+    calcul_occupation_parcelles, normalize_parcelle_name,
+    find_doublon, create_parcelle, update_parcelle, get_all_parcelles,
+    resolve_parcelle,
+)
 from llm.groq_client import parse_commande, repondre_question
 from utils.ia_orchestrator import build_question_context
 from utils.date_utils import parse_date
@@ -278,8 +283,167 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# [US_Aide_contextuelle_par_commande] Textes d'aide contextuels par mot-clé
+# ──────────────────────────────────────────────────────────────────────────────
+
+_HELP_PARCELLE = (
+    "📍 *Aide — Parcelles*\n"
+    "Gérer et consulter vos parcelles du potager.\n\n"
+    "*── Plan d'occupation ──*\n"
+    "• Vue globale de toutes les parcelles\n"
+    "  → /plan\n"
+    "  → _\"plan du potager\"_\n"
+    "• Vue détaillée d'une parcelle\n"
+    "  → /plan nord\n"
+    "  → _\"plan parcelle nord\"_\n"
+    "  → _\"qu'est-ce qui pousse en nord ?\"_\n\n"
+    "*── Gestion des parcelles ──*\n"
+    "• Lister toutes les parcelles connues\n"
+    "  → /parcelle lister\n"
+    "  → /parcelles\n"
+    "• Créer une nouvelle parcelle\n"
+    "  → /parcelle ajouter nord\n"
+    "  → /parcelle ajouter nord sud 12.5\n"
+    "  _(nom · exposition · superficie en m²)_\n"
+    "• Modifier les métadonnées d'une parcelle\n"
+    "  → /parcelle modifier nord exposition=sud\n"
+    "  → /parcelle modifier nord superficie=8.5\n"
+    "  → /parcelle modifier nord exposition=sud superficie=8.5\n"
+    "  _Paramètres : exposition · superficie · ordre_\n\n"
+    "💡 _Noms de parcelle insensibles à la casse.\n"
+    "   Les doublons sont détectés automatiquement._"
+)
+
+_HELP_SEMIS = (
+    "🌱 *Aide — Semis*\n"
+    "Enregistrer vos semis en pépinière ou en pleine terre.\n\n"
+    "*Actions disponibles :*\n"
+    "• Semis en pépinière\n"
+    "  → _\"semis tomates variété Saint-Pierre le 5 mars\"_\n"
+    "  → _\"j'ai semé 30 graines de basilic en plateau\"_\n"
+    "• Semis en pleine terre\n"
+    "  → _\"semis direct carottes en parcelle B2\"_\n"
+    "  → _\"semis radis pleine terre parcelle A3 le 8 avril\"_\n"
+    "• Consulter les semis en cours\n"
+    "  → _\"liste de mes semis\"_\n"
+    "  → _\"quels semis sont en cours ?\"_\n\n"
+    "💡 _Précisez toujours : culture · variété (optionnel) · date · lieu_"
+)
+
+_HELP_GODET = (
+    "🪴 *Aide — Mise en godet*\n"
+    "Suivre le repiquage des plants de pépinière en godet.\n\n"
+    "*Actions disponibles :*\n"
+    "• Enregistrer une mise en godet\n"
+    "  → _\"mise en godet tomates Saint-Pierre 20 plants\"_\n"
+    "  → _\"repiquer 15 plants de poivron en godet le 10 mars\"_\n"
+    "• Consulter les godets en attente\n"
+    "  → _\"liste des godets\"_\n"
+    "  → _\"quels plants sont en godet ?\"_\n\n"
+    "💡 _La mise en godet est l'étape entre le semis plateau\n"
+    "   et la plantation en parcelle._"
+)
+
+_HELP_RECOLTE = (
+    "🧺 *Aide — Récoltes*\n"
+    "Enregistrer vos récoltes ponctuelles ou finales.\n\n"
+    "*Actions disponibles :*\n"
+    "• Récolte ponctuelle (culture continue)\n"
+    "  → _\"récolté 800g de tomates en A1\"_\n"
+    "  → _\"cueilli 3 courgettes parcelle B2 aujourd'hui\"_\n"
+    "• Récolte finale / clôture de culture\n"
+    "  → _\"récolte finale haricots parcelle A3\"_\n"
+    "  → _\"dernière récolte courgettes B2, culture terminée\"_\n"
+    "• Récolte de graines\n"
+    "  → _\"récolte graines tomates Saint-Pierre 15g\"_\n"
+    "  → _\"mis de côté graines courge pour semis prochain\"_\n"
+    "• Consulter l'historique\n"
+    "  → _\"historique récoltes\"_\n"
+    "  → _\"mes récoltes du mois de mars\"_"
+)
+
+_HELP_STOCK = (
+    "📦 *Aide — Stock*\n"
+    "Suivre vos stocks de semences et intrants.\n\n"
+    "*Actions disponibles :*\n"
+    "• Consulter le stock\n"
+    "  → _\"stock tomates\"_\n"
+    "  → _\"combien de graines de basilic il me reste ?\"_\n"
+    "• Ajouter au stock\n"
+    "  → _\"ajout stock carottes Nantaise 50g\"_\n"
+    "  → _\"reçu 1 sachet poivron Corno di Toro\"_\n"
+    "• Déduire du stock (automatique après semis)\n"
+    "  → _Le stock est mis à jour automatiquement_\n"
+    "  → _à chaque semis enregistré._\n"
+    "• Alertes stock faible\n"
+    "  → _Le bot signale automatiquement si un stock_\n"
+    "  → _passe sous le seuil critique._"
+)
+
+_HELP_STATS = (
+    "📊 *Aide — Statistiques*\n"
+    "Consulter les bilans de votre potager.\n\n"
+    "*Actions disponibles :*\n"
+    "• Statistiques générales\n"
+    "  → /stats\n"
+    "  → _\"bilan du potager\"_\n"
+    "• Stats par culture\n"
+    "  → _\"stats tomates\"_\n"
+    "  → _\"bilan courgettes cette saison\"_\n"
+    "• Stats par parcelle\n"
+    "  → _\"stats parcelle A1\"_\n"
+    "  → _\"bilan rotation parcelle B2\"_\n"
+    "• Synthèse des semis\n"
+    "  → _\"synthèse semis\"_\n"
+    "  → _\"récapitulatif de mes semis\"_\n"
+    "• Bilan de rotation\n"
+    "  → _\"rotation des cultures\"_\n"
+    "  → _\"quelles familles ont occupé chaque parcelle ?\"_"
+)
+
+_HELP_MOTS_CLES = "parcelle · semis · godet · recolte · stock · stats"
+
+_HELP_CONTEXTUEL: dict[str, str] = {
+    "parcelle":  _HELP_PARCELLE,
+    "parcelles": _HELP_PARCELLE,
+    "plan":      _HELP_PARCELLE,
+    "semis":     _HELP_SEMIS,
+    "godet":     _HELP_GODET,
+    "godets":    _HELP_GODET,
+    "recolte":   _HELP_RECOLTE,
+    "recoltes":  _HELP_RECOLTE,
+    "stock":     _HELP_STOCK,
+    "stocks":    _HELP_STOCK,
+    "stats":     _HELP_STATS,
+    "statistiques": _HELP_STATS,
+}
+
+
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Aide en ligne synthétique, optimisée mobile."""
+    """[US_Aide_contextuelle_par_commande] Aide générale ou ciblée via /help [mot-clé]."""
+    from unidecode import unidecode as _uni
+
+    mot_cle = (ctx.args[0].lower().strip() if ctx.args else None)
+    if mot_cle:
+        mot_cle = _uni(mot_cle)  # insensible aux accents
+
+    if mot_cle and mot_cle in _HELP_CONTEXTUEL:
+        await update.message.reply_text(
+            _HELP_CONTEXTUEL[mot_cle], parse_mode="Markdown"
+        )
+        return
+
+    if mot_cle and mot_cle not in _HELP_CONTEXTUEL:
+        await update.message.reply_text(
+            f'❓ Mot-clé \"*{mot_cle}*\" non reconnu.\n\n'
+            f"Mots-clés disponibles :\n  {_HELP_MOTS_CLES}\n\n"
+            f"Exemple : /help parcelle",
+            parse_mode="Markdown",
+        )
+        return
+
+    # ── Aide générale (comportement existant / CA5) ────────────────────────────
     texte = (
         "🌿 *AIDE — Assistant Potager*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -300,6 +464,8 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "━━━━━━━━━━━━━━━━━━━━\n"
         "*⌨️ Commandes*\n"
         "/start — Menu principal\n"
+        "/plan — Plan d'occupation des parcelles\n"
+        "/parcelle ajouter [nom] — Créer une parcelle\n"
         "/stats — Statistiques saison\n"
         "/historique — 10 derniers événements\n"
         "/ask — Question analytique\n"
@@ -308,10 +474,9 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/tts\\_on · /tts\\_off — Vocal on/off\n"
         "/help — Cette aide\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "*🔘 Boutons & mots-clés*\n"
-        "Stats · Historique · Interroger\n"
-        "Corriger · Supprimer · Menu\n"
-        "Confirmer · Annuler\n\n"
+        "*💡 Aide ciblée par domaine*\n"
+        f"  {_HELP_MOTS_CLES}\n"
+        "Exemple : /help parcelle\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "*🔍 Exemples de questions*\n"
         "• _\"Combien de kg de tomates récoltés ?\"_\n"
@@ -401,6 +566,17 @@ async def handle_voice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if intent == "HISTORIQUE":
         await msg.edit_text("📋 *Historique*", parse_mode="Markdown")
         await cmd_historique(update, ctx)
+        return
+    # [US_Plan_occupation_parcelles / CA9] Routage vocal PLAN
+    if intent == "PLAN":
+        await msg.edit_text("🗺 *Plan du potager...*", parse_mode="Markdown")
+        parcelle_vocal = _extract_plan_parcelle(texte)
+        if parcelle_vocal:
+            log.info(f"🗺 PLAN VOCAL PARCELLE : parcelle='{parcelle_vocal}'")
+            ctx.args = [parcelle_vocal]
+        else:
+            ctx.args = []
+        await cmd_plan(update, ctx)
         return
     if intent == "INTERROGER":
         # Si le texte est déjà une question complète (>4 mots), la traiter directement
@@ -508,6 +684,7 @@ INTENTS = {
     "MENU",         # retour accueil, menu
     "NOUVELLE",     # nouvelle action, autre chose
     "ACTION",       # action potager à enregistrer (récolte, semis, arrosage...)
+    "PLAN",         # [US_Plan_occupation_parcelles / CA9] plan d'occupation parcelles
 }
 
 _CLASSIFY_PROMPT = """Tu es un assistant potager. L'utilisateur t'envoie un message (transcrit vocalement ou tapé).
@@ -520,6 +697,7 @@ Classe ce message dans UNE SEULE catégorie parmi :
 - MENU        : veut revenir au menu, accueil, annuler
 - NOUVELLE    : veut saisir une nouvelle action (après une autre)
 - ACTION      : décrit une action potager réellement RÉALISÉE à enregistrer (récolte, semis, plantation, arrosage, paillage, traitement, observation, fertilisation, taille, tuteurage, repiquage, désherbage, perte, mise_en_godet)
+- PLAN        : veut voir le plan d'occupation des parcelles (plan du potager, plan parcelle X)
 
 RÈGLE IMPORTANTE : si le message contient "afficher", "montrer", "voir", "liste", "consulter", "quand", "combien", "quel" → c'est INTERROGER ou HISTORIQUE, jamais ACTION.
 
@@ -532,10 +710,13 @@ Exemples :
 - "récolte 500g de carotte nantaise hier" → ACTION
 - "semis de radis 50 graines" → ACTION
 - "quand ai-je semé les carottes" → INTERROGER
+- "plan du potager" → PLAN
+- "plan parcelle nord" → PLAN
+- "montre-moi le plan" → PLAN
 
 Message : "{texte}"
 
-Réponds avec UN SEUL MOT en majuscules parmi : STATS, HISTORIQUE, INTERROGER, CORRIGER, SUPPRIMER, MENU, NOUVELLE, ACTION
+Réponds avec UN SEUL MOT en majuscules parmi : STATS, HISTORIQUE, INTERROGER, CORRIGER, SUPPRIMER, MENU, NOUVELLE, ACTION, PLAN
 Réponse :"""
 
 def classify_intent(texte: str) -> str:
@@ -579,6 +760,29 @@ def _extract_stats_culture(texte: str) -> str | None:
     return m.group(1) if m else None
 
 
+def _extract_plan_parcelle(texte: str) -> str | None:
+    """
+    [US_Plan_occupation_parcelles / CA9]
+    Extrait le nom de parcelle depuis une phrase vocale type 'plan parcelle nord'.
+
+    Exemples reconnus :
+      "plan du potager"     → None  (vue globale)
+      "plan parcelle nord"  → "nord"
+      "plan nord"           → "nord"
+    """
+    m = re.search(
+        r'plan\s+(?:parcelle\s+)?(\w+)',
+        texte.lower().strip(),
+    )
+    if m:
+        mot = m.group(1)
+        # Ignorer les mots génériques qui ne sont pas des noms de parcelle
+        if mot in {"du", "des", "le", "la", "les", "potager", "jardin"}:
+            return None
+        return mot
+    return None
+
+
 async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Message texte → parsing direct ou commande de navigation."""
     texte_raw = update.message.text.strip()
@@ -586,7 +790,7 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     log.info(f"💬 MESSAGE TEXTE  : {texte_raw}")
 
     # Réinitialiser le mode SAUF si on est en plein flux de correction ou en attente de question
-    MODES_CORRECTION = {'corr_select', 'corr_apply', 'corr_search', 'corr_confirm_delete', 'corr_confirm', 'ask'}
+    MODES_CORRECTION = {'corr_select', 'corr_apply', 'corr_search', 'corr_confirm_delete', 'corr_confirm', 'ask', 'parcelle_confirm'}
     if ctx.user_data.get('mode') not in MODES_CORRECTION:
         ctx.user_data['mode'] = None
 
@@ -663,6 +867,43 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         log.info(f"❓ MODE ASK        : reroutage → _ask_question")
         await _ask_question(update, texte_raw)
         return
+
+    # ── PRIORITÉ 2b : confirmation parcelle en attente [US_Plan_occupation_parcelles / CA12, CA13]
+    if mode == 'parcelle_confirm':
+        pending = ctx.user_data.get('parcelle_pending', {})
+        ctx.user_data.pop('parcelle_pending', None)
+        ctx.user_data['mode'] = None
+        reponse = texte.strip().lower()
+        if reponse in {"oui", "o", "yes", "y"}:
+            nom = pending.get("nom", "")
+            if nom:
+                try:
+                    db = SessionLocal()
+                    try:
+                        new_p = create_parcelle(
+                            db, nom,
+                            exposition=pending.get("exposition"),
+                            superficie_m2=pending.get("superficie_m2"),
+                        )
+                        log.info(f"[US_Plan_occupation_parcelles] Parcelle confirmée : {new_p.nom!r}")
+                        details = []
+                        if new_p.exposition:
+                            details.append(f"exposition {new_p.exposition}")
+                        if new_p.superficie_m2 is not None:
+                            details.append(f"{new_p.superficie_m2} m²")
+                        detail_str = f" ({', '.join(details)})" if details else ""
+                        await update.message.reply_text(
+                            f"✅ Parcelle *{new_p.nom.upper()}* créée{detail_str}.",
+                            parse_mode="Markdown",
+                        )
+                    finally:
+                        db.close()
+                except ValueError as e:
+                    await update.message.reply_text(f"❌ {e}", parse_mode="Markdown")
+            return
+        else:
+            await update.message.reply_text("↩️ Création annulée.", parse_mode="Markdown")
+            return
 
     # ── PRIORITÉ 3 : mots-clés correction/suppression
     if texte in NAV_SUPPRIMER or any(texte.startswith(k) for k in ["supprimer", "effacer", "annuler"]):
@@ -829,13 +1070,28 @@ async def _parse_and_save(update: Update, texte: str, msg=None):
     saved_items = []
     try:
         for parsed in items:
+            # ── Résolution FK parcelle ────────────────────────────────────────
+            nom_parcelle = parsed.get("parcelle")
+            parcelle_obj = None
+            if nom_parcelle:
+                parcelle_obj = resolve_parcelle(db, nom_parcelle)
+                if parcelle_obj is None:
+                    log.warning(f"⚠️ PARCELLE INCONNUE : {nom_parcelle!r} — sauvegarde bloquée")
+                    err_msg = (
+                        f"❌ La parcelle *{nom_parcelle}* n'existe pas dans votre potager.\n\n"
+                        f"Créez-la d'abord avec : `/parcelle ajouter {nom_parcelle}`"
+                    )
+                    if msg:  await msg.edit_text(err_msg, parse_mode="Markdown")
+                    else:    await update.message.reply_text(err_msg, parse_mode="Markdown", reply_markup=MENU_KEYBOARD)
+                    return
             event = Evenement(
                 type_action       = normalize_action(parsed.get("action")),
                 culture           = parsed.get("culture"),
                 variete           = parsed.get("variete"),
                 quantite          = _to_float(parsed.get("quantite")),
                 unite             = parsed.get("unite"),
-                parcelle          = parsed.get("parcelle"),
+                parcelle          = parcelle_obj.nom if parcelle_obj else None,
+                parcelle_id       = parcelle_obj.id  if parcelle_obj else None,
                 rang              = _to_int(parsed.get("rang")),
                 duree             = _to_int(parsed.get("duree_minutes")),
                 traitement        = parsed.get("traitement"),
@@ -848,7 +1104,7 @@ async def _parse_and_save(update: Update, texte: str, msg=None):
             db.add(event)
             db.commit()
             db.refresh(event)
-            log.info(f"💾 DB SAVE        : id={event.id} | action={event.type_action} | culture={event.culture} | qte={event.quantite} {event.unite or ''} | rang={event.rang} | parcelle={event.parcelle} | date={event.date}")
+            log.info(f"💾 DB SAVE        : id={event.id} | action={event.type_action} | culture={event.culture} | qte={event.quantite} {event.unite or ''} | rang={event.rang} | parcelle={event.parcelle} (id={event.parcelle_id}) | date={event.date}")
             saved_items.append((parsed, event.id))
     except Exception as e:
         db.rollback()
@@ -1020,6 +1276,390 @@ async def _ask_question(update: Update, question: str):
 
 
 # ── COMMANDES ───────────────────────────────────────────────────────────────────
+
+# ──────────────────────────────────────────────────────────────────────────────
+# [US_Plan_occupation_parcelles / CA1-CA7, CA9] Commande /plan
+# ──────────────────────────────────────────────────────────────────────────────
+
+# [US_Plan_occupation_parcelles / CA3] Seuils d'alerte par type d'organe (jours)
+SEUIL_ALERTE = {"végétatif": 45, "reproducteur": 90}
+
+# [US_Plan_occupation_parcelles] Emoji par type d'organe
+_EMOJI_ORGANE = {"reproducteur": "🍅", "végétatif": "🥬"}
+_EMOJI_INCONNU = "🌱"
+
+
+async def cmd_plan(update, ctx) -> None:
+    """
+    /plan [parcelle] — Plan d'occupation du potager.
+
+    [CA1] Vue globale : cultures actives par parcelle avec variété et nb plants
+    [CA2] Âge J+ depuis la première plantation
+    [CA3] Alerte ⚠️ si âge > seuil typique (végétatif ≥ 45j, reproducteur ≥ 90j)
+    [CA4] Parcelles libres affichées 🟢 [NOM] — Libre
+    [CA5] /plan nord filtre sur la parcelle "nord" (insensible à la casse)
+    [CA6] Hint en pied de message
+    [CA7] Cultures sans parcelle sous 📍 Non localisé
+    """
+    from datetime import date as date_type
+    db = SessionLocal()
+    try:
+        occupation = calcul_occupation_parcelles(db)
+        parcelles_bdd = get_all_parcelles(db)
+
+        # ── Filtre parcelle spécifique (CA5) ──────────────────────────────────
+        filtre_arg = (ctx.args[0].strip().lower() if ctx.args else None)
+
+        if filtre_arg:
+            # Vue détaillée d'une parcelle
+            cles_norm = {
+                (k.strip().lower() if k else None): k
+                for k in occupation
+            }
+            cle_originale = cles_norm.get(filtre_arg)
+
+            if cle_originale is None and cle_originale not in occupation:
+                # Chercher dans toutes les clés normalisées
+                for k in occupation:
+                    if k and k.strip().lower() == filtre_arg:
+                        cle_originale = k
+                        break
+
+            cultures = occupation.get(cle_originale, [])
+            if not cultures:
+                await update.message.reply_text(
+                    f"Aucune culture active sur la parcelle *{filtre_arg.upper()}*.",
+                    parse_mode="Markdown",
+                )
+                return
+
+            nom_affiche = (cle_originale or filtre_arg).upper()
+            lignes = [f"📍 *{nom_affiche}* — Plan détaillé\n"]
+            for c in sorted(cultures, key=lambda x: x["culture"]):
+                alerte = _alerte_recolte(c["type_organe"], c["age_jours"])
+                emoji = _EMOJI_ORGANE.get(c["type_organe"], _EMOJI_INCONNU)
+                var = f" {c['variete']}" if c["variete"] else ""
+                nb = int(c["nb_plants"])
+                unite = c["unite"] or "plants"
+                date_str = (
+                    c["date_plantation"].strftime("%d %b").lstrip("0")
+                    if c["date_plantation"] else "?"
+                )
+                lignes.append(
+                    f"{emoji} *{c['culture']}{var}*\n"
+                    f"  {nb} {unite} actifs · plantés le {date_str} (J+{c['age_jours']})"
+                )
+                if c["type_organe"]:
+                    lignes.append(f"  Type : {c['type_organe']}")
+                if alerte:
+                    seuil = SEUIL_ALERTE.get(c["type_organe"], 0)
+                    lignes.append(f"  ⚠️ Récolte imminente ({c['type_organe']} > {seuil} j)")
+
+            lignes.append(
+                f"\n_Historique de rotation : \"rotation parcelle {filtre_arg}\"_"
+            )
+            await update.message.reply_text("\n".join(lignes), parse_mode="Markdown")
+            await send_voice_reply(update, f"Détail de la parcelle {filtre_arg}")
+            return
+
+        # ── Vue globale ────────────────────────────────────────────────────────
+        today = date_type.today()
+        date_str = today.strftime("%d %b %Y").lstrip("0") if hasattr(today, "strftime") else str(today)
+
+        lignes = [f"📋 *Plan d'occupation — {date_str}*\n"]
+
+        # Parcelles connues en BDD → ordre défini
+        noms_bdd = {p.nom.strip().lower(): p.nom for p in parcelles_bdd}
+        affichees: set = set()
+
+        def _bloc_parcelle(nom_cle, cultures_liste: list) -> list:
+            """Formate le bloc d'une parcelle avec ses cultures."""
+            bloc = []
+            nom_affiche = (nom_cle or "").upper()
+            nb = len(cultures_liste)
+            bloc.append(f"📍 *{nom_affiche}* · {nb} culture{'s' if nb > 1 else ''} active{'s' if nb > 1 else ''}")
+            for c in sorted(cultures_liste, key=lambda x: x["culture"]):
+                emoji = _EMOJI_ORGANE.get(c["type_organe"], _EMOJI_INCONNU)
+                var = f" {c['variete']}" if c["variete"] else ""
+                nb_plants = int(c["nb_plants"])
+                unite = c["unite"] or "plants"
+                alerte = _alerte_recolte(c["type_organe"], c["age_jours"])
+                alerte_str = " ⚠️ récolte imminente" if alerte else ""
+                bloc.append(
+                    f"  {emoji} {c['culture']}{var} — {nb_plants} {unite} · J+{c['age_jours']}{alerte_str}"
+                )
+            return bloc
+
+        # Parcelles BDD actives (ordonnées)
+        for p in parcelles_bdd:
+            nom_key = p.nom.strip()
+            nom_lower = nom_key.lower()
+            affichees.add(nom_lower)
+
+            cultures = occupation.get(nom_key, [])
+            # Essai avec la clé telle quelle, puis en ignorant la casse
+            if not cultures:
+                for k in occupation:
+                    if k and k.strip().lower() == nom_lower:
+                        cultures = occupation[k]
+                        break
+
+            if cultures:
+                lignes.extend(_bloc_parcelle(nom_key, cultures))
+            else:
+                # [CA4] Parcelle libre
+                lignes.append(f"🟢 *{nom_key.upper()}* — Libre")
+            lignes.append("")  # ligne vide entre parcelles
+
+        # Parcelles dans occupation mais pas en BDD (non référencées)
+        for nom_cle, cultures in occupation.items():
+            if nom_cle is None:
+                continue
+            if nom_cle.strip().lower() not in affichees:
+                lignes.extend(_bloc_parcelle(nom_cle, cultures))
+                lignes.append("")
+
+        # [CA7] Cultures sans parcelle
+        sans_parcelle = occupation.get(None, [])
+        if sans_parcelle:
+            nb = len(sans_parcelle)
+            lignes.append(f"📍 *Non localisé* · {nb} culture{'s' if nb > 1 else ''}")
+            for c in sorted(sans_parcelle, key=lambda x: x["culture"]):
+                emoji = _EMOJI_ORGANE.get(c["type_organe"], _EMOJI_INCONNU)
+                var = f" {c['variete']}" if c["variete"] else ""
+                nb_plants = int(c["nb_plants"])
+                unite = c["unite"] or "plants"
+                alerte = _alerte_recolte(c["type_organe"], c["age_jours"])
+                alerte_str = " ⚠️ récolte imminente" if alerte else ""
+                lignes.append(
+                    f"  {emoji} {c['culture']}{var} — {nb_plants} {unite} · J+{c['age_jours']}{alerte_str}"
+                )
+            lignes.append("")
+
+        # [CA6] Pied du message
+        lignes.append("_Pour le détail : /plan [nom parcelle]_")
+        lignes.append("_Historique de rotation : \"rotation parcelle X\"_")
+
+        texte_final = "\n".join(lignes).strip()
+        await update.message.reply_text(texte_final, parse_mode="Markdown")
+        await send_voice_reply(update, "Plan du potager affiché")
+
+    except Exception as e:
+        log.error(f"[US_Plan_occupation_parcelles] cmd_plan erreur : {e}")
+        await update.message.reply_text(f"❌ Erreur : {e}", reply_markup=MENU_KEYBOARD)
+    finally:
+        db.close()
+
+
+def _alerte_recolte(type_organe: str | None, age_jours: int) -> bool:
+    """[CA3] Retourne True si la culture dépasse le seuil d'alerte."""
+    if type_organe and type_organe in SEUIL_ALERTE:
+        return age_jours >= SEUIL_ALERTE[type_organe]
+    return False
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# [US_Plan_occupation_parcelles / CA10, CA12, CA13] Commande /parcelle
+# ──────────────────────────────────────────────────────────────────────────────
+
+async def cmd_parcelle(update, ctx) -> None:
+    """
+    /parcelle <sous-commande> — Gestion des parcelles.
+
+    Sous-commandes :
+      ajouter [nom] [exposition] [superficie]  — créer une parcelle (CA10, CA12, CA13)
+      modifier [nom] clé=valeur ...             — mettre à jour les métadonnées
+      lister                                    — afficher toutes les parcelles
+    """
+    USAGE = (
+        "*Usage :*\n"
+        "  /parcelle ajouter [nom] [exposition] [superficie]\n"
+        "  /parcelle modifier [nom] exposition=sud superficie=8.5\n"
+        "  /parcelle lister\n\n"
+        "Exemples :\n"
+        "  /parcelle ajouter nord sud 12.5\n"
+        "  /parcelle modifier nord exposition=sud superficie=8.5"
+    )
+
+    if not ctx.args:
+        await update.message.reply_text(USAGE, parse_mode="Markdown")
+        return
+
+    sous_cmd = ctx.args[0].lower()
+
+    # ── /parcelle lister ──────────────────────────────────────────────────────
+    if sous_cmd == "lister":
+        db = SessionLocal()
+        try:
+            parcelles = get_all_parcelles(db)
+            if not parcelles:
+                await update.message.reply_text(
+                    "📋 Aucune parcelle enregistrée.\n"
+                    "Créez-en une : /parcelle ajouter [nom]",
+                    parse_mode="Markdown",
+                )
+                return
+            lignes = [f"📋 *Parcelles enregistrées ({len(parcelles)})*\n"]
+            for p in parcelles:
+                details = []
+                if p.exposition:
+                    details.append(f"exposition {p.exposition}")
+                if p.superficie_m2 is not None:
+                    details.append(f"{p.superficie_m2} m²")
+                detail_str = f" · {' · '.join(details)}" if details else ""
+                lignes.append(f"📍 *{p.nom.upper()}*{detail_str}")
+            lignes.append("\n_Ajouter : /parcelle ajouter [nom] [exposition] [superficie]_")
+            lignes.append("_Modifier : /parcelle modifier [nom] clé=valeur_")
+            await update.message.reply_text("\n".join(lignes), parse_mode="Markdown")
+        except Exception as e:
+            log.error(f"[US_Plan_occupation_parcelles] cmd_parcelle lister erreur : {e}")
+            await update.message.reply_text(f"❌ Erreur : {e}")
+        finally:
+            db.close()
+        return
+
+    # ── /parcelle modifier [nom] clé=valeur ... ───────────────────────────────
+    if sous_cmd == "modifier":
+        if len(ctx.args) < 3:
+            await update.message.reply_text(
+                "❌ Usage : /parcelle modifier [nom] clé=valeur ...\n"
+                "Exemple : /parcelle modifier nord exposition=sud superficie=8.5",
+                parse_mode="Markdown",
+            )
+            return
+
+        nom = ctx.args[1].strip()
+        kwargs: dict = {}
+        for token in ctx.args[2:]:
+            if "=" in token:
+                k, _, v = token.partition("=")
+                kwargs[k.lower().strip()] = v.strip()
+            else:
+                await update.message.reply_text(
+                    f"❌ Paramètre invalide : *{token}*\n"
+                    "Format attendu : clé=valeur (ex : exposition=sud)",
+                    parse_mode="Markdown",
+                )
+                return
+
+        db = SessionLocal()
+        try:
+            parc, modifs = update_parcelle(db, nom, **kwargs)
+            lignes = [f"✅ Parcelle *{parc.nom.upper()}* mise à jour :"]
+            for m in modifs:
+                lignes.append(f"  · {m}")
+            await update.message.reply_text("\n".join(lignes), parse_mode="Markdown")
+        except LookupError:
+            all_p = get_all_parcelles(db)
+            noms = ", ".join(p.nom.lower() for p in all_p) or "(aucune)"
+            await update.message.reply_text(
+                f"❌ Parcelle *{nom}* introuvable.\nParcelles connues : {noms}",
+                parse_mode="Markdown",
+            )
+        except ValueError as e:
+            await update.message.reply_text(f"❌ {e}", parse_mode="Markdown")
+        except Exception as e:
+            log.error(f"[US_Plan_occupation_parcelles] cmd_parcelle modifier erreur : {e}")
+            await update.message.reply_text(f"❌ Erreur : {e}")
+        finally:
+            db.close()
+        return
+
+    # ── /parcelle ajouter [nom] [exposition] [superficie] ─────────────────────
+    if sous_cmd == "ajouter":
+        if len(ctx.args) < 2:
+            await update.message.reply_text(
+                "❌ Précisez le nom de la parcelle.\nExemple : /parcelle ajouter nord",
+                parse_mode="Markdown",
+            )
+            return
+
+        nom = ctx.args[1].strip()
+        # Parsing optionnel : arg[2]=exposition (texte), arg[3]=superficie (float)
+        exposition: str | None = None
+        superficie_m2: float | None = None
+        extra = ctx.args[2:]
+        for tok in extra:
+            try:
+                superficie_m2 = float(tok.replace(",", "."))
+            except ValueError:
+                exposition = tok
+
+        nom_normalise = normalize_parcelle_name(nom)
+
+        db = SessionLocal()
+        try:
+            exact, proche = find_doublon(db, nom_normalise)
+
+            # [CA10] Doublon exact
+            if exact:
+                log.info(f"[US_Plan_occupation_parcelles] Doublon exact : {nom!r} → {exact.nom!r}")
+                await update.message.reply_text(
+                    f"❌ La parcelle *{exact.nom.upper()}* existe déjà.\n"
+                    "Utilisez /plan pour consulter les parcelles existantes.",
+                    parse_mode="Markdown",
+                )
+                return
+
+            # [CA12] Variante proche
+            if proche:
+                log.info(f"[US_Plan_occupation_parcelles] Variante proche : {nom!r} ≈ {proche.nom!r}")
+                ctx.user_data['mode'] = 'parcelle_confirm'
+                ctx.user_data['parcelle_pending'] = {
+                    "nom": nom,
+                    "exposition": exposition,
+                    "superficie_m2": superficie_m2,
+                }
+                await update.message.reply_text(
+                    f"⚠️ Une parcelle similaire existe : *{proche.nom.upper()}*.\n"
+                    f"Confirmer la création de *{nom.upper()}* ? _(oui / non)_",
+                    parse_mode="Markdown",
+                )
+                return
+
+            # [CA13] Pas de doublon → récapitulatif + confirmation
+            parcelles_existantes = get_all_parcelles(db)
+            lignes = ["📋 *Parcelles existantes :*"]
+            for p in parcelles_existantes:
+                lignes.append(f"  · {p.nom.upper()}")
+            if not parcelles_existantes:
+                lignes.append("  _(aucune pour l'instant)_")
+
+            detail_parts = []
+            if exposition:
+                detail_parts.append(f"exposition : {exposition}")
+            if superficie_m2 is not None:
+                detail_parts.append(f"superficie : {superficie_m2} m²")
+            detail_conf = f" ({', '.join(detail_parts)})" if detail_parts else ""
+            lignes.append(
+                f"\n➕ Créer la parcelle *{nom.upper()}*{detail_conf} ? _(oui / non)_"
+            )
+
+            ctx.user_data['mode'] = 'parcelle_confirm'
+            ctx.user_data['parcelle_pending'] = {
+                "nom": nom,
+                "exposition": exposition,
+                "superficie_m2": superficie_m2,
+            }
+            await update.message.reply_text("\n".join(lignes), parse_mode="Markdown")
+
+        except Exception as e:
+            log.error(f"[US_Plan_occupation_parcelles] cmd_parcelle ajouter erreur : {e}")
+            await update.message.reply_text(f"❌ Erreur : {e}", reply_markup=MENU_KEYBOARD)
+        finally:
+            db.close()
+        return
+
+    # Sous-commande inconnue
+    await update.message.reply_text(USAGE, parse_mode="Markdown")
+
+
+async def _cmd_parcelles_lister(update, ctx) -> None:
+    """Alias /parcelles → /parcelle lister."""
+    ctx.args = ["lister"]
+    await cmd_parcelle(update, ctx)
+
+
 async def cmd_stats(update, ctx):
     """
     /stats — Statistiques rapides du potager.
@@ -1297,11 +1937,12 @@ def _fmt_event(e) -> str:
     d    = e.date.strftime("%d/%m") if e.date else "?"
     act  = e.type_action or "?"
     cult = f" {e.culture}" if e.culture else ""
+    var  = f" ({e.variete})" if e.variete else ""
     qte  = f" {e.quantite}{e.unite or ''}" if e.quantite else ""
     parc = f" [{e.parcelle}]" if e.parcelle else ""
     rang = f" x{e.rang}rangs" if e.rang else ""
     trt  = f" ({e.traitement})" if e.traitement else ""
-    return f"#{e.id} {d} — {act}{cult}{qte}{rang}{parc}{trt}"
+    return f"#{e.id} {d} — {act}{cult}{var}{qte}{rang}{parc}{trt}"
 
 
 def _normalize_action_search(action: str) -> str:
@@ -1341,11 +1982,12 @@ L'utilisateur veut retrouver un événement potager.
 Description : "{description}"
 
 Retourne UNIQUEMENT ce JSON (null si non mentionné) :
-{{"action": string|null, "culture": string|null, "date_debut": "YYYY-MM-DD"|null, "date_fin": "YYYY-MM-DD"|null, "parcelle": string|null}}
+{{"action": string|null, "culture": string|null, "variete": string|null, "date_debut": "YYYY-MM-DD"|null, "date_fin": "YYYY-MM-DD"|null, "parcelle": string|null}}
 
 RÈGLES :
 - action SANS accent : recolte, plantation, semis, arrosage, paillage, traitement, desherbage, taille, observation, tuteurage, fertilisation, repiquage
 - culture au singulier minuscule sans accent
+- variete : mot ou groupe de mots décrivant la variété (ex: "ronde", "cerise", "noire de crimée"), null si non mentionné
 - "11 mars" ou "11 mars dernier" → date_debut="{today.year}-03-11", date_fin="{today.year}-03-11"  
 - "la semaine dernière" → date_debut="{last_week}", date_fin="{today.isoformat()}"
 - "ce mois" → date_debut="{last_month}", date_fin="{today.isoformat()}"
@@ -1380,6 +2022,8 @@ JSON brut uniquement."""
             q = q.filter(Evenement.type_action == criteres["action"])
         if criteres.get("culture"):
             q = q.filter(Evenement.culture.ilike(f"%{criteres['culture']}%"))
+        if criteres.get("variete"):
+            q = q.filter(Evenement.variete.ilike(f"%{criteres['variete']}%"))
         if criteres.get("parcelle"):
             q = q.filter(Evenement.parcelle.ilike(f"%{criteres['parcelle']}%"))
         if criteres.get("date_debut"):
@@ -1711,6 +2355,28 @@ JSON brut uniquement."""
         )
         return
 
+    # ── Validation FK parcelle ────────────────────────────────────────────────
+    nom_parcelle_corr = corrections.get("parcelle")
+    if nom_parcelle_corr is not None:
+        db_check = SessionLocal()
+        try:
+            parcelle_resolue = resolve_parcelle(db_check, nom_parcelle_corr)
+        finally:
+            db_check.close()
+        if parcelle_resolue is None:
+            log.warning(f"⚠️ CORRECTION BLOQUÉE : parcelle inconnue {nom_parcelle_corr!r}")
+            await msg_wait.edit_text(
+                f"❌ La parcelle *{nom_parcelle_corr}* n'existe pas dans votre potager.\n\n"
+                f"Créez-la d'abord avec : `/parcelle ajouter {nom_parcelle_corr}`",
+                parse_mode="Markdown"
+            )
+            # Rester en corr_apply pour permettre une nouvelle correction
+            return
+        # Normaliser le nom vers la forme canonique de la BDD
+        corrections["parcelle"] = parcelle_resolue.nom
+        corrections["_parcelle_id"] = parcelle_resolue.id
+        log.info(f"✅ PARCELLE RÉSOLUE : {nom_parcelle_corr!r} → {parcelle_resolue.nom!r} (id={parcelle_resolue.id})")
+
     log.info(f"✏️ CORRECTIONS     : {corrections}")
 
     # Préparer le résumé lisible avant confirmation
@@ -1729,6 +2395,8 @@ JSON brut uniquement."""
 
     lines = [f"📋 *Résumé des modifications sur #{event_id} :*\n"]
     for champ, nouvelle_val in corrections.items():
+        if champ.startswith("_"):   # champs internes (_parcelle_id…)
+            continue
         ancienne_val = event_actuel.get(champ, "—") or "—"
         label = LABELS.get(champ, champ)
         lines.append(f"• *{label}* : `{ancienne_val}` → `{nouvelle_val if nouvelle_val is not None else 'supprimé'}`")
@@ -1790,6 +2458,9 @@ async def _corr_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE, texte: s
         try:
             event = db.get(Evenement, event_id)
             for champ, valeur in corrections.items():
+                if champ == "_parcelle_id":
+                    # champ interne — géré ci-dessous avec "parcelle"
+                    continue
                 col = mapping.get(champ, champ)
                 if champ == "date":
                     setattr(event, "date", parse_date(valeur))
@@ -1797,6 +2468,10 @@ async def _corr_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE, texte: s
                     setattr(event, col, _to_float(valeur))
                 elif champ in ("rang", "duree_minutes"):
                     setattr(event, col, _to_int(valeur))
+                elif champ == "parcelle":
+                    # Mettre à jour le texte ET la FK parcelle_id
+                    event.parcelle    = valeur
+                    event.parcelle_id = corrections.get("_parcelle_id")
                 elif hasattr(event, col):
                     setattr(event, col, valeur)
 
@@ -1810,6 +2485,7 @@ async def _corr_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE, texte: s
             details = ", ".join(
                 f"{LABELS.get(k, k)}: {event_actuel.get(k, '—') or '—'} → {v if v is not None else 'supprimé'}"
                 for k, v in corrections.items()
+                if not k.startswith("_")   # ignorer champs internes (_parcelle_id…)
             )
             trace = f" | [CORR {date.today().isoformat()}] {details}"
             event.texte_original = (event.texte_original or "") + trace
@@ -1942,6 +2618,11 @@ def main():
 
     # Commande météo manuelle
     app.add_handler(CommandHandler("meteo",      cmd_meteo))
+
+    # [US_Plan_occupation_parcelles / CA1, CA13] Plan et gestion des parcelles
+    app.add_handler(CommandHandler("plan",      cmd_plan))
+    app.add_handler(CommandHandler("parcelle",  cmd_parcelle))
+    app.add_handler(CommandHandler("parcelles", _cmd_parcelles_lister))  # alias /parcelle lister
 
     # Messages
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))

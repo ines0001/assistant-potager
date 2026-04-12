@@ -1,4 +1,35 @@
 
+## [v2.13.0] — 2026-04-11
+
+### 🚀 Nouveautés
+- Ajoute l'aide contextuelle par mot-clé : `/help parcelle`, `/help semis`, `/help godet`, `/help recolte`, `/help stock`, `/help stats` (US_Aide_contextuelle_par_commande)
+- Enrichit `/help` sans argument d'une section "Aide ciblée" listant les thèmes disponibles ; mot-clé inconnu → liste des mots-clés valides (US_Aide_contextuelle_par_commande)
+- Ajoute `/parcelle modifier [nom] clé=valeur...` pour mettre à jour exposition, superficie ou ordre d'une parcelle existante (US_Plan_occupation_parcelles)
+- Ajoute `/parcelle lister` et son alias `/parcelles` pour lister toutes les parcelles (US_Plan_occupation_parcelles)
+- Enrichit `/parcelle ajouter` pour accepter `[exposition]` et `[superficie]` en paramètres positionnels (US_Plan_occupation_parcelles)
+
+### 🔧 Améliorations techniques
+- Ajoute `update_parcelle` dans `utils/parcelles.py` avec validation des champs via `_CHAMPS_MODIFIER`, lève `LookupError` si parcelle introuvable et `ValueError` si paramètre inconnu
+- Ajoute les constantes statiques `_HELP_PARCELLE`, `_HELP_SEMIS`, `_HELP_GODET`, `_HELP_RECOLTE`, `_HELP_STOCK`, `_HELP_STATS`, `_HELP_CONTEXTUEL` dans `bot.py`
+- Transmet `exposition` et `superficie_m2` depuis le handler `parcelle_confirm` lors de la confirmation de création
+
+## [v2.12.0] — 2026-04-11
+
+### 🚀 Nouveautés
+- Ajoute `/plan` : vue globale du potager par parcelle avec cultures actives, âge J+ de chaque culture et alertes ⚠️ récolte imminente (végétatif ≥ 45 j, reproducteur ≥ 90 j) (US_Plan_occupation_parcelles #18)
+- Ajoute `/plan [nom]` : vue détaillée d'une parcelle spécifique, insensible à la casse
+- Ajoute `/parcelle ajouter [nom]` : création de parcelle avec refus sur doublon exact et demande de confirmation si variante proche (distance Levenshtein ≤ 2)
+- Signale les parcelles libres avec 🟢 et regroupe les cultures sans parcelle dans "Non localisé"
+- Reconnaît les commandes vocales "plan du potager" et "plan parcelle [nom]" et les route vers `/plan`
+
+### 🔧 Améliorations techniques
+- Ajoute `utils/parcelles.py` : `normalize_parcelle_name`, `levenshtein_distance`, `find_doublon`, `create_parcelle`, `get_all_parcelles`, `calcul_occupation_parcelles`
+- Ajoute `cmd_plan`, `cmd_parcelle`, `_extract_plan_parcelle()` et les handlers `/plan` et `/parcelle` dans `bot.py`
+
+### 💾 Base de données
+- Ajoute le modèle SQLAlchemy `Parcelle` dans `database/models.py` (colonne `nom_normalise` UNIQUE)
+- Ajoute `migration_v10.sql` : création de la table `parcelles` avec prépopulation depuis `evenements`
+
 ## [v2.11.0] — 2026-04-09
 
 ### 🚀 Nouveautés
