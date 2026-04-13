@@ -61,14 +61,21 @@ jobs:
 
       - name: Smoke test
         run: |
-          sleep 10
           ssh ${{ secrets.SCALEWAY_USER }}@${{ secrets.SCALEWAY_HOST }} "
-            status=\$(systemctl is-active potager.service)
-            if [ \"\${status}\" != 'active' ]; then
-              echo \"ERREUR: service non actif (\${status})\"
-              systemctl status potager.service --no-pager
-              exit 1
-            fi
-            curl --fail --silent --max-time 10 http://localhost:8000/health | grep -q 'ok'
+            set -euo pipefail
+            echo 'Attente démarrage du service...'
+            for i in \$(seq 1 12); do
+              status=\$(systemctl is-active potager.service || true)
+              if [ \"\${status}\" = 'active' ]; then
+                if curl --fail --silent --max-time 5 http://localhost:8000/health | grep -q 'ok'; then
+                  echo 'Déploiement réussi — @AssistantPotagerBot actif'
+                  exit 0
+                fi
+              fi
+              echo \"Tentative \${i}/12 — service: \${status}, attente 5s...\"
+              sleep 5
+            done
+            echo 'ERREUR: service non opérationnel après 60s'
+            systemctl status potager.service --no-pager
+            exit 1
           "
-          echo "Déploiement réussi — @AssistantPotagerBot actif"
