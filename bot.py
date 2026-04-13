@@ -55,7 +55,7 @@ from utils.actions import normalize_action
 from utils.parcelles import (
     calcul_occupation_parcelles, normalize_parcelle_name,
     find_doublon, create_parcelle, update_parcelle, get_all_parcelles,
-    resolve_parcelle,
+    resolve_parcelle, rename_parcelle,
 )
 from llm.groq_client import parse_commande, repondre_question
 from utils.ia_orchestrator import build_question_context
@@ -310,7 +310,9 @@ _HELP_PARCELLE = (
     "  → /parcelle modifier nord exposition=sud\n"
     "  → /parcelle modifier nord superficie=8.5\n"
     "  → /parcelle modifier nord exposition=sud superficie=8.5\n"
-    "  _Paramètres : exposition · superficie · ordre_\n\n"
+    "  _Paramètres : exposition · superficie · ordre_\n"
+    "• Renommer une parcelle (propagation sur tout l'historique)\n"
+    "  → /parcelle renommer sud carré-sud\n\n"
     "💡 _Noms de parcelle insensibles à la casse.\n"
     "   Les doublons sont détectés automatiquement._"
 )
@@ -1475,10 +1477,12 @@ async def cmd_parcelle(update, ctx) -> None:
         "*Usage :*\n"
         "  /parcelle ajouter [nom] [exposition] [superficie]\n"
         "  /parcelle modifier [nom] exposition=sud superficie=8.5\n"
+        "  /parcelle renommer <ancien_nom> <nouveau_nom>\n"
         "  /parcelle lister\n\n"
         "Exemples :\n"
         "  /parcelle ajouter nord sud 12.5\n"
-        "  /parcelle modifier nord exposition=sud superficie=8.5"
+        "  /parcelle modifier nord exposition=sud superficie=8.5\n"
+        "  /parcelle renommer sud carré-sud"
     )
 
     if not ctx.args:
@@ -1646,6 +1650,42 @@ async def cmd_parcelle(update, ctx) -> None:
         except Exception as e:
             log.error(f"[US_Plan_occupation_parcelles] cmd_parcelle ajouter erreur : {e}")
             await update.message.reply_text(f"❌ Erreur : {e}", reply_markup=MENU_KEYBOARD)
+        finally:
+            db.close()
+        return
+
+    # ── /parcelle renommer <ancien> <nouveau> ─────────────────────────────────
+    if sous_cmd == "renommer":
+        if len(ctx.args) < 3:
+            await update.message.reply_text(
+                "❌ Usage : /parcelle renommer \\<ancien\\_nom\\> \\<nouveau\\_nom\\>\n"
+                "Exemple : /parcelle renommer sud carré\\-sud",
+                parse_mode="MarkdownV2",
+            )
+            return
+        ancien = ctx.args[1].strip()
+        nouveau = " ".join(ctx.args[2:]).strip()  # supporte noms avec espaces
+        db = SessionLocal()
+        try:
+            parc, nb = rename_parcelle(db, ancien, nouveau)
+            await update.message.reply_text(
+                f"✅ Parcelle renommée : *{ancien}* → *{parc.nom}* "
+                f"({nb} événement{'s' if nb > 1 else ''} mis à jour)",
+                parse_mode="Markdown",
+            )
+        except LookupError:
+            await update.message.reply_text(
+                f"❌ Parcelle introuvable : *{ancien}*",
+                parse_mode="Markdown",
+            )
+        except ValueError:
+            await update.message.reply_text(
+                "❌ Ce nom est déjà utilisé par une autre parcelle",
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            log.error(f"[US-006] cmd_parcelle renommer erreur : {e}")
+            await update.message.reply_text(f"❌ Erreur : {e}")
         finally:
             db.close()
         return

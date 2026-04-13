@@ -244,6 +244,72 @@ def update_parcelle(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# [US-006] Renommage d'une parcelle avec propagation sur les événements
+# ──────────────────────────────────────────────────────────────────────────────
+
+def rename_parcelle(
+    db: Session,
+    ancien_nom: str,
+    nouveau_nom: str,
+) -> Tuple[Parcelle, int]:
+    """
+    [US-006] Renomme une parcelle et propage le nouveau nom sur tous les événements liés.
+    La mise à jour est atomique (un seul commit).
+
+    Args:
+        db         : session SQLAlchemy
+        ancien_nom : nom actuel (résolution via nom_normalise, insensible casse/accents)
+        nouveau_nom: nouveau nom souhaité
+
+    Returns:
+        (parcelle_mise_a_jour, nb_evenements_modifies)
+
+    Raises:
+        LookupError : si ancien_nom ne correspond à aucune parcelle connue
+        ValueError  : si nouveau_nom est déjà utilisé par une autre parcelle
+    """
+    # Résolution de l'ancienne parcelle via nom_normalise
+    parcelle = resolve_parcelle(db, ancien_nom)
+    if parcelle is None:
+        raise LookupError(ancien_nom)
+
+    # Vérification que le nouveau nom n'est pas déjà utilisé par une autre parcelle
+    nouveau_normalise = normalize_parcelle_name(nouveau_nom)
+    conflit = (
+        db.query(Parcelle)
+        .filter(
+            Parcelle.nom_normalise == nouveau_normalise,
+            Parcelle.id != parcelle.id,
+        )
+        .first()
+    )
+    if conflit is not None:
+        raise ValueError(f"Ce nom est déjà utilisé par une autre parcelle : {conflit.nom!r}")
+
+    ancien_nom_stocke = parcelle.nom
+
+    # Propagation sur evenements.parcelle (nom textuel)
+    nb_evenements = (
+        db.query(Evenement)
+        .filter(Evenement.parcelle == ancien_nom_stocke)
+        .update({Evenement.parcelle: nouveau_nom}, synchronize_session="fetch")
+    )
+
+    # Mise à jour de la parcelle elle-même
+    parcelle.nom = nouveau_nom
+    parcelle.nom_normalise = nouveau_normalise
+
+    db.commit()
+    db.refresh(parcelle)
+
+    log.info(
+        f"[US-006] Parcelle renommée : {ancien_nom_stocke!r} → {nouveau_nom!r} "
+        f"({nb_evenements} événements mis à jour)"
+    )
+    return parcelle, nb_evenements
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # [US_Plan_occupation_parcelles / CA4] Liste des parcelles
 # ──────────────────────────────────────────────────────────────────────────────
 

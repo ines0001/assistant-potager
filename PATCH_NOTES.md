@@ -1,4 +1,14 @@
 
+## [v2.14.0] — 2026-04-13
+
+### 🚀 Nouveautés
+- Ajoute `/parcelle renommer <ancien> <nouveau>` pour renommer une parcelle et propager le changement sur tous les événements liés (US-006)
+
+### 🔧 Améliorations techniques
+- Ajoute `rename_parcelle` dans `utils/parcelles.py` avec propagation atomique sur les événements associés
+- Met à jour `_HELP_PARCELLE`, `USAGE` et les imports dans `bot.py`
+- Ajoute 26 tests couvrant les cas CA1 à CA9 dans `tests/test_us_006_renommer_parcelle.py`
+
 ## [v2.13.0] — 2026-04-11
 
 ### 🚀 Nouveautés
